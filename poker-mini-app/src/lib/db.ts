@@ -23,6 +23,7 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS game_state (
       id TEXT PRIMARY KEY,
       pot_size INTEGER DEFAULT 0,
+      current_bet INTEGER DEFAULT 0,
       current_turn_fid INTEGER,
       board TEXT DEFAULT '',
       deck TEXT DEFAULT '',
@@ -36,13 +37,14 @@ export async function initDb() {
       fid INTEGER PRIMARY KEY,
       stack_size INTEGER DEFAULT 5000,
       hand TEXT DEFAULT '',
+      current_bet INTEGER DEFAULT 0,
       joined_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
   
   // Ensure we have a default game state row
   await db.execute(`
-    INSERT OR IGNORE INTO game_state (id, pot_size, current_turn_fid, board, deck, phase)
-    VALUES ('main_table', 0, NULL, '', '', 'preflop')
+    INSERT OR IGNORE INTO game_state (id, pot_size, current_bet, current_turn_fid, board, deck, phase)
+    VALUES ('main_table', 0, 0, NULL, '', '', 'preflop')
   `);
 }

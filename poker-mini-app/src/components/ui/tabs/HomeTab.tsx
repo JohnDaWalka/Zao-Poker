@@ -30,6 +30,10 @@ export function HomeTab() {
   const [board, setBoard] = useState<string[]>([]);
   const [playerCards, setPlayerCards] = useState<string[]>([]);
   const [phase, setPhase] = useState<string>("preflop");
+  
+  // Betting states
+  const [currentBet, setCurrentBet] = useState(0);
+  const [playerCurrentBet, setPlayerCurrentBet] = useState(0);
 
   // Poll database for table state
   useEffect(() => {
@@ -41,16 +45,18 @@ export function HomeTab() {
         if (data.success) {
           setPotSize(data.gameState.pot_size);
           setPhase(data.gameState.phase);
+          setCurrentBet(data.gameState.current_bet || 0);
           setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
 
-          const me = data.players.find((p: any) => p.fid === context?.user?.fid);
+          const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
           if (me) {
             setPlayerStack(me.stack_size);
+            setPlayerCurrentBet(me.current_bet || 0);
             setPlayerCards(me.hand ? me.hand.split(",") : []);
           }
         }
       } catch (e) {}
-    }, 1500); // Snappy polling (1.5 seconds)
+    }, 1500); // Snappy polling
     return () => clearInterval(interval);
   }, [gameState, context?.user?.fid]);
 
@@ -102,10 +108,12 @@ export function HomeTab() {
     if (data.success) {
       setPotSize(data.gameState.pot_size);
       setPhase(data.gameState.phase);
+      setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
       const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
       if (me) {
         setPlayerStack(me.stack_size);
+        setPlayerCurrentBet(me.current_bet || 0);
         setPlayerCards(me.hand ? me.hand.split(",") : []);
       }
     }
@@ -124,18 +132,21 @@ export function HomeTab() {
     if (data.success) {
       setPotSize(data.gameState.pot_size);
       setPhase(data.gameState.phase);
+      setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
       const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
       if (me) {
         setPlayerStack(me.stack_size);
+        setPlayerCurrentBet(me.current_bet || 0);
         setPlayerCards(me.hand ? me.hand.split(",") : []);
       }
     }
   };
 
-  const handleAction = async (action: string) => {
+  const handleAction = async (action: string, customAmount?: number) => {
     sendEvent({ action });
-    triggerNotification(); // Simulate pushing a notification to the next player
+    triggerNotification();
+
     if (action === "fold") {
       await fetch("/api/table", {
         method: "POST",
@@ -146,12 +157,17 @@ export function HomeTab() {
       return;
     }
 
-    // Call Python backend
+    // Determine final bet amount based on Hold'em action
     let amount = 0;
-    if (action === "call") amount = 50;
-    if (action === "raise") amount = 150;
-    if (action === "overbet") amount = potSize * 2;
-    if (action === "all_in") amount = playerStack;
+    const toCall = currentBet - playerCurrentBet;
+
+    if (action === "call") {
+      amount = toCall;
+    } else if (action === "bet" || action === "raise") {
+      amount = customAmount || 0;
+    } else if (action === "all_in") {
+      amount = playerStack;
+    }
 
     // Update DB
     const res = await fetch("/api/table", {
@@ -164,22 +180,25 @@ export function HomeTab() {
     if (data.success) {
       setPotSize(data.gameState.pot_size);
       setPhase(data.gameState.phase);
+      setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
       const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
       if (me) {
         setPlayerStack(me.stack_size);
+        setPlayerCurrentBet(me.current_bet || 0);
         setPlayerCards(me.hand ? me.hand.split(",") : []);
       }
     }
 
+    // Call Python backend for analysis
     try {
       const resAnalyze = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fid: context?.user?.fid || 9999,
-          action,
-          amount,
+          action: action === "check" ? "check" : (action === "call" ? "call" : "bet"),
+          amount: amount,
           pot_size: potSize + amount,
           stack_size: playerStack - amount,
           cards: playerCards
@@ -192,6 +211,9 @@ export function HomeTab() {
       console.error("Coach API error:", e);
     }
   };
+
+  // No-Limit Hold'em Action HUD Mapping
+  const toCall = currentBet - playerCurrentBet;
 
   if (gameState === "lobby") {
     return (
@@ -300,8 +322,8 @@ export function HomeTab() {
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="w-full max-w-md">
+        {/* Dynamic No-Limit Hold'em HUD */}
+        <div className="w-full max-w-md bg-gray-900 bg-opacity-95 p-3 rounded-lg border border-gray-800">
           {phase === "showdown" ? (
             <button
               onClick={handleNextHand}
@@ -310,22 +332,71 @@ export function HomeTab() {
               Start Next Hand 🚀
             </button>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-              <button onClick={() => handleAction("fold")} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow">
-                Fold
-              </button>
-              <button onClick={() => handleAction("call")} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg shadow">
-                Call ($50)
-              </button>
-              <button onClick={() => handleAction("raise")} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow">
-                Raise ($150)
-              </button>
-              <button onClick={() => handleAction("overbet")} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow">
-                Overbet
-              </button>
-              <button onClick={() => handleAction("all_in")} className="bg-red-800 hover:bg-red-900 text-white font-bold py-2 px-4 rounded-lg shadow">
-                All In (Stack: ${playerStack})
-              </button>
+            <div className="flex flex-col space-y-2">
+              <div className="flex justify-between items-center text-xs text-gray-400 px-1">
+                <span>To Call: <span className="text-yellow-400 font-bold">${toCall}</span></span>
+                <span>Active Bet: <span className="text-blue-400 font-bold">${currentBet}</span></span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => handleAction("fold")}
+                  className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 rounded-lg text-sm"
+                >
+                  Fold
+                </button>
+                
+                {toCall === 0 ? (
+                  <button
+                    onClick={() => handleAction("check")}
+                    className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 rounded-lg text-sm"
+                  >
+                    Check
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleAction("call")}
+                    className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 rounded-lg text-sm"
+                  >
+                    Call (${toCall})
+                  </button>
+                )}
+              </div>
+
+              {/* Betting & Raising presets */}
+              <div className="grid grid-cols-4 gap-1.5 pt-1">
+                {toCall === 0 ? (
+                  <>
+                    <button onClick={() => handleAction("bet", 100)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
+                      Bet 2BB ($100)
+                    </button>
+                    <button onClick={() => handleAction("bet", 150)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
+                      Bet 3BB ($150)
+                    </button>
+                    <button onClick={() => handleAction("bet", potSize)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
+                      Bet Pot (${potSize})
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => handleAction("raise", currentBet + 100)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
+                      Raise +$100
+                    </button>
+                    <button onClick={() => handleAction("raise", currentBet * 2)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
+                      Raise Min (${currentBet * 2})
+                    </button>
+                    <button onClick={() => handleAction("raise", potSize + toCall * 2)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
+                      Raise Pot
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => handleAction("all_in")}
+                  className="bg-red-900 hover:bg-red-950 text-white text-xs font-bold py-1.5 rounded"
+                >
+                  All In (${playerStack})
+                </button>
+              </div>
             </div>
           )}
         </div>
