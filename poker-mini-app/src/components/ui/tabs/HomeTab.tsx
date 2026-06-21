@@ -325,12 +325,17 @@ export function HomeTab() {
         {/* Dynamic No-Limit Hold'em HUD */}
         <div className="w-full max-w-md bg-gray-900 bg-opacity-95 p-3 rounded-lg border border-gray-800">
           {phase === "showdown" ? (
-            <button
-              onClick={handleNextHand}
-              className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg text-lg animate-bounce"
-            >
-              Start Next Hand 🚀
-            </button>
+            <div className="text-center space-y-3 py-2">
+              <p className="text-green-400 font-bold text-lg">
+                {potSize === 0 ? "Opponent Folded! You Won! 🏆" : "Showdown! Cards revealed."}
+              </p>
+              <button
+                onClick={handleNextHand}
+                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg text-lg animate-bounce"
+              >
+                Start Next Hand 🚀
+              </button>
+            </div>
           ) : (
             <div className="flex flex-col space-y-2">
               <div className="flex justify-between items-center text-xs text-gray-400 px-1">

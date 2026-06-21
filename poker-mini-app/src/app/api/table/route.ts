@@ -21,6 +21,81 @@ function createDeck(): string[] {
   return deck;
 }
 
+// Convert card rank character to value
+function rankToValue(rank: string): number {
+  if (rank === "T") return 10;
+  if (rank === "J") return 11;
+  if (rank === "Q") return 12;
+  if (rank === "K") return 13;
+  if (rank === "A") return 14;
+  return parseInt(rank) || 0;
+}
+
+// Heuristic game-tree evaluator to simulate AI opponent's choices (call/fold)
+function evaluateAIAction(aiHandStr: string, boardStr: string, toCall: number): "call" | "fold" {
+  if (!aiHandStr) return "fold";
+  const aiHand = aiHandStr.split(",");
+  if (aiHand.length < 2) return "fold";
+
+  const board = boardStr ? boardStr.split(",") : [];
+
+  const ranks = aiHand.map(c => c[0]);
+  const suits = aiHand.map(c => c[1]);
+  
+  const v1 = rankToValue(ranks[0]);
+  const v2 = rankToValue(ranks[1]);
+  const isPair = v1 === v2;
+  const isSuited = suits[0] === suits[1];
+  const gap = Math.abs(v1 - v2);
+  const isConnector = gap === 1 || gap === 2;
+
+  // 1. Preflop logic
+  if (board.length === 0) {
+    if (isPair) return "call";
+    if (v1 >= 10 && v2 >= 10) return "call";
+    if (isSuited && (v1 >= 9 || v2 >= 9)) return "call";
+    if (isConnector && (v1 >= 8 || v2 >= 8)) return "call";
+    
+    // Fold if bet is too high relative to starting hand
+    if (toCall > 150) return "fold";
+    if (toCall <= 50) return "call"; // Always defend big/small blinds
+    return "fold";
+  }
+
+  // 2. Postflop logic
+  const allCards = [...aiHand, ...board];
+  const allRanks = allCards.map(c => c[0]);
+  const allSuits = allCards.map(c => c[1]);
+  
+  // Count rank duplicates (Pairs, Trips, Quads)
+  const rankCounts: Record<string, number> = {};
+  for (const r of allRanks) {
+    rankCounts[r] = (rankCounts[r] || 0) + 1;
+  }
+  const maxDuplicates = Math.max(...Object.values(rankCounts));
+  const hasPair = maxDuplicates >= 2;
+  
+  // Count suits (Flush Draws)
+  const suitCounts: Record<string, number> = {};
+  for (const s of allSuits) {
+    suitCounts[s] = (suitCounts[s] || 0) + 1;
+  }
+  const maxSuits = Math.max(...Object.values(suitCounts));
+  const hasFlushDraw = maxSuits >= 4;
+
+  if (hasPair || hasFlushDraw) {
+    return "call";
+  }
+
+  // If there is nothing to call (checked), AI checks/calls
+  if (toCall === 0) return "call";
+
+  // 10% bluff-catch/sticky floating call
+  if (Math.random() < 0.1) return "call";
+
+  return "fold";
+}
+
 // Deal a new hand (Preflop)
 async function dealNewHand(fids: number[]) {
   const deck = createDeck();
@@ -32,10 +107,18 @@ async function dealNewHand(fids: number[]) {
     const hand = `${c1},${c2}`;
     
     // User is the Big Blind (posts 50)
-    await db.execute({
-      sql: "UPDATE players SET hand = ?, current_bet = 50, stack_size = stack_size - 50 WHERE fid = ?",
-      args: [hand, fid]
-    });
+    if (fid !== 1) {
+      await db.execute({
+        sql: "UPDATE players SET hand = ?, current_bet = 50, stack_size = stack_size - 50 WHERE fid = ?",
+        args: [hand, fid]
+      });
+    } else {
+      // AI is Small Blind (posts 25)
+      await db.execute({
+        sql: "UPDATE players SET hand = ?, current_bet = 25, stack_size = stack_size - 25 WHERE fid = 1",
+        args: [hand]
+      });
+    }
   }
 
   const deckStr = deck.join(",");
@@ -130,35 +213,30 @@ export async function POST(request: Request) {
 
     const { rows: playerRows } = await db.execute("SELECT fid, stack_size, hand, current_bet FROM players");
     const activeFids = playerRows.map((r: any) => r.fid);
+    
     const currentPlayer = playerRows.find((r: any) => r.fid === fid);
+    const aiPlayer = playerRows.find((r: any) => r.fid === 1);
 
     if (action === "join") {
+      // Add Player (User)
       await db.execute({
         sql: "INSERT OR IGNORE INTO players (fid, stack_size, hand, current_bet) VALUES (?, 5000, '', 0)",
         args: [fid]
       });
-      // Auto-deal if it's the first player joining
-      const newFids = [...new Set([...activeFids, fid])];
-      await dealNewHand(newFids);
-    } else if (action === "deal" || currentGameState.phase === "showdown") {
-      // Start a new hand
-      await dealNewHand(activeFids);
-    } else if (action === "fold") {
-      // Fold resets/removes player
+      // Add AI Opponent
       await db.execute({
-        sql: "DELETE FROM players WHERE fid = ?",
-        args: [fid]
+        sql: "INSERT OR IGNORE INTO players (fid, stack_size, hand, current_bet) VALUES (1, 5000, '', 0)",
+        args: []
       });
-      const remainingFids = activeFids.filter(id => id !== fid);
-      if (remainingFids.length > 0) {
-        await dealNewHand(remainingFids);
-      } else {
-        await db.execute("UPDATE game_state SET pot_size = 0, current_bet = 0, board = '', deck = '', phase = 'preflop' WHERE id = 'main_table'");
-      }
-    } else if (currentPlayer) {
-      // Process betting actions: check, call, bet, raise, all_in
+      
+      await dealNewHand([fid, 1]);
+    } else if (action === "deal" || currentGameState.phase === "showdown") {
+      await dealNewHand(activeFids.length > 0 ? activeFids : [fid, 1]);
+    } else if (action === "fold") {
+      // If user folds, reset
+      await dealNewHand(activeFids);
+    } else if (currentPlayer && aiPlayer) {
       if (action === "check") {
-        // Can only check if no active bet
         if (currentGameState.current_bet === currentPlayer.current_bet) {
           await advanceGame(currentGameState);
         }
@@ -174,11 +252,10 @@ export async function POST(request: Request) {
             args: [callAmount, currentGameState.current_bet, fid]
           });
         }
-        // Call completes the street
+        
         const { rows: freshState } = await db.execute("SELECT * FROM game_state WHERE id = 'main_table'");
         await advanceGame(freshState[0]);
       } else if (action === "bet" || action === "raise") {
-        // amount represents total target bet size
         const betDiff = amount - currentPlayer.current_bet;
         
         // Deduct player raise
@@ -191,15 +268,33 @@ export async function POST(request: Request) {
           args: [betDiff, amount, fid]
         });
 
-        // Simulate AI Opponent Calling the Bet/Raise
-        await db.execute({
-          sql: "UPDATE game_state SET pot_size = pot_size + ? WHERE id = 'main_table'",
-          args: [betDiff] // AI puts in matching amount to call
-        });
+        // Run game-tree decision logic for AI calling/folding
+        const aiToCall = amount - aiPlayer.current_bet;
+        const aiDecision = evaluateAIAction(aiPlayer.hand, currentGameState.board, aiToCall);
 
-        // Advance to next street (since AI calls the bet)
-        const { rows: freshState } = await db.execute("SELECT * FROM game_state WHERE id = 'main_table'");
-        await advanceGame(freshState[0]);
+        if (aiDecision === "call") {
+          // AI Calls
+          await db.execute({
+            sql: "UPDATE game_state SET pot_size = pot_size + ? WHERE id = 'main_table'",
+            args: [aiToCall]
+          });
+          await db.execute({
+            sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ? WHERE fid = 1",
+            args: [aiToCall, amount]
+          });
+          
+          const { rows: freshState } = await db.execute("SELECT * FROM game_state WHERE id = 'main_table'");
+          await advanceGame(freshState[0]);
+        } else {
+          // AI Folds! Player wins the pot.
+          await db.execute({
+            sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ?",
+            args: [currentGameState.pot_size + betDiff, fid]
+          });
+          await db.execute({
+            sql: "UPDATE game_state SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = 'main_table'"
+          });
+        }
       } else if (action === "all_in") {
         const allInAmount = currentPlayer.stack_size;
         const totalPlayerBet = currentPlayer.current_bet + allInAmount;
@@ -213,15 +308,32 @@ export async function POST(request: Request) {
           args: [totalPlayerBet, fid]
         });
 
-        // Simulate AI Opponent Calling the All-in
-        await db.execute({
-          sql: "UPDATE game_state SET pot_size = pot_size + ? WHERE id = 'main_table'",
-          args: [allInAmount] // AI calls all-in
-        });
+        // Run game-tree decision logic for AI calling/folding all-in
+        const aiToCall = totalPlayerBet - aiPlayer.current_bet;
+        const aiDecision = evaluateAIAction(aiPlayer.hand, currentGameState.board, aiToCall);
 
-        // Advance
-        const { rows: freshState } = await db.execute("SELECT * FROM game_state WHERE id = 'main_table'");
-        await advanceGame(freshState[0]);
+        if (aiDecision === "call") {
+          await db.execute({
+            sql: "UPDATE game_state SET pot_size = pot_size + ? WHERE id = 'main_table'",
+            args: [aiToCall]
+          });
+          await db.execute({
+            sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ? WHERE fid = 1",
+            args: [aiToCall, totalPlayerBet]
+          });
+          
+          const { rows: freshState } = await db.execute("SELECT * FROM game_state WHERE id = 'main_table'");
+          await advanceGame(freshState[0]);
+        } else {
+          // AI Folds all-in
+          await db.execute({
+            sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ?",
+            args: [currentGameState.pot_size + allInAmount, fid]
+          });
+          await db.execute({
+            sql: "UPDATE game_state SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = 'main_table'"
+          });
+        }
       }
     }
 
