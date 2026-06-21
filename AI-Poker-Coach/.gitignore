@@ -1,0 +1,21 @@
+# PQC Security - NEVER commit private keys!
+*.key
+!*.pub.json
+security/config.yaml
+!security/config.template.yaml
+!security/*.pqc
+
+# Local Env and Keys
+env.yaml
+.env.yaml
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Local Data and Vector Store
+ai_outputs/
+dossiers/
+vector_store/vectors.json
+vector_store/metadata.json

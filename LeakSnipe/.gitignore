@@ -1,0 +1,100 @@
+# Build & distribution
+build/
+dist/
+dist-*/
+*.egg-info/
+*.spec.bak
+
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.code-workspace
+
+# Local nested repos / build trees (not part of Python app)
+Poker-Suite/
+poker-build/
+*.swp
+*.swo
+*~
+
+# Environment & Secrets
+.env
+.env.local
+secrets/
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Model weights (train locally)
+models/
+models/*.npz
+models/*.pt
+models/*.meta.json
+
+# Database & Temp
+*.db-journal
+*.db-wal
+*.db-shm
+*.tmp
+*.temp
+poker_debug.log
+coach_memory.db
+
+# Old builds
+*.exe.old
+LeakSnipe*.exe
+poker.exe
+
+# Test artifacts
+test_*.py
+artifacts/
+ai_outputs/
+hud_debug.log
+
+# Tauri / Rust build artifacts
+leaksnipe-ui/src-tauri/target/
+leak-snipe-desktop/src-tauri/target/
+
+# Local debug scratch scripts
+_debug*.py
+
+# Node / Electron
+node_modules/
+PokerBuild/node_modules/
+PokerBuild/poker-trainer/node_modules/
+
+# Electron build output (binaries too large for GitHub)
+PokerBuild/poker-trainer/build_output/
+PokerBuild/poker-trainer/build_unpacked/
+PokerBuild/poker-trainer/*.exe
+"PokerBuild/poker-trainer/Poker Therapist.exe"
+
+# Data files (not for version control)
+*.db
+*.csv
+dh2_sync_state.json
+
+# Build output dirs
+PokerBuild/.tmp.driveupload/
+PokerBuild/debug_output/
+PokerBuild/poker-trainer/debug_output/
+PokerBuild/go/
+PokerBuild/poker-trainer/go/
+PokerBuild/tsc_out.txt
+PokerBuild/vite_out.txt
+PokerBuild/eb_out.txt
+

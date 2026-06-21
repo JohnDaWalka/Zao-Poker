@@ -1,0 +1,124 @@
+{
+  "name": "poker-therapist",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "description": "Custom Server Poker Interface & AI for DriveHUD2",
+  "author": "mfane",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "package": "npm run build && electron-builder",
+    "package:portable": "npm run build && electron-builder --win portable",
+    "package:win": "npm run build && electron-builder --win nsis portable",
+    "archive:release": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\compress-release.ps1",
+    "release:portable": "npm run package:portable && npm run archive:release",
+    "release:win": "npm run package:win && npm run archive:release"
+  },
+  "keywords": [
+    "Electron",
+    "vite",
+    "React",
+    "sqlite",
+    "poker",
+    "hud"
+  ],
+  "build": {
+    "appId": "com.mfane.pokertherapist",
+    "productName": "Poker Therapist Suite",
+    "copyright": "Copyright © 2025 mfane",
+    "icon": "build-assets/icon.ico",
+    "compression": "maximum",
+    "files": [
+      "dist-electron/**/*",
+      "dist/**/*"
+    ],
+    "extraResources": [],
+    "directories": {
+      "output": "release",
+      "buildResources": "build-assets"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-Setup.${ext}",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "installerIcon": "build-assets/icon.ico",
+      "uninstallerIcon": "build-assets/icon.ico",
+      "installerHeaderIcon": "build-assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Poker Therapist Suite",
+      "artifactName": "PokerTherapistSuite-Setup.${ext}",
+      "deleteAppDataOnUninstall": false,
+      "displayLanguageSelector": false,
+      "installerLanguages": [
+        "en_US"
+      ],
+      "include": "build-assets/installer.nsh"
+    },
+    "portable": {
+      "artifactName": "PokerTherapistSuite-Portable.${ext}"
+    },
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "electronLanguages": [
+      "en-US"
+    ]
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "autoprefixer": "^10.4.27",
+    "better-sqlite3": "^12.6.2",
+    "drizzle-orm": "^0.45.1",
+    "get-windows": "^9.2.3",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.13.1",
+    "recharts": "^3.7.0",
+    "tailwindcss": "^4.2.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "drizzle-kit": "^0.31.9",
+    "electron": "^40.10.4",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.48.0",
+    "vite": "^7.3.1",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  }
+}

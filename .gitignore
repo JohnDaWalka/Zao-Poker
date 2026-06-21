@@ -1,0 +1,26 @@
+# Secrets & Keys
+Secrets/
+*.key
+env.yaml
+.env.yaml
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Local Data
+ai_outputs/
+dossiers/
+vector_store/vectors.json
+vector_store/metadata.json
+
+# Node/Next.js/Vercel
+node_modules/
+.next/
+.vercel/
+dist/
+build/
+out/
+.npm
+.eslintcache

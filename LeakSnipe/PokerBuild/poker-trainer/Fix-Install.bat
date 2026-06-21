@@ -1,0 +1,13 @@
+@echo off
+echo Cleaning previous node_modules...
+rmdir /s /q node_modules
+echo Installing dependencies with npm...
+call npm install
+echo Rebuilding native modules...
+call npm rebuild
+echo Dependency installation complete.
+echo Attempting to build...
+call npm run package
+echo.
+echo If successful, check release/ folder for .exe
+echo If failing, run 'npm run dev' to use app locally.

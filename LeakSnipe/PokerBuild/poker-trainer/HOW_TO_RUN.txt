@@ -1,0 +1,27 @@
+EMERGENCY BUILD INSTRUCTIONS
+============================
+
+The automated build process encountered security/permission blocks while trying to package your application.
+However, the necessary files and fixes have been prepared.
+
+Please follow these steps to generate a working application:
+
+1. Double-click "manual_deploy_v2.bat" in this folder.
+   - This script will find the Electron runtime from previous build attempts.
+   - It will assemble a "Poker Therapist Manual" folder.
+   - It copies the fixed code (with crash protection) into that folder.
+
+2. Open the "Poker Therapist Manual" folder.
+
+3. Double-click "Poker Therapist.exe".
+
+If that fails or the folder is empty:
+1. Double-click "reliable_build.bat".
+   - This will perform a full clean install using NPM (bypassing PNPM issues).
+   - It will take 5-10 minutes.
+   - It will produce a "Poker Therapist.exe" in the root folder.
+
+Troubleshooting:
+- If you see "VCRUNTIME140.dll missing", install the "Microsoft Visual C++ Redistributable".
+- If the app opens but shows a white screen, press Ctrl+Shift+I to see errors.
+- Startup logs are now written to: %APPDATA%\poker-therapist-desktop\poker-therapist.log

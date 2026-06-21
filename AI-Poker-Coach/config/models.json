@@ -1,0 +1,59 @@
+{
+  "default_provider": "local",
+  "embedding": {
+    "model_name": "all-MiniLM-L6-v2",
+    "dimension": 384
+  },
+  "local": {
+    "provider": "ollama",
+    "models": {
+      "light": "phi",
+      "deep": "mistral",
+      "summary": "llama3"
+    },
+    "supported_models": ["mistral", "llama3", "phi"],
+    "endpoint": "http://localhost:11434/api/generate",
+    "token_limits": {
+      "light": 512,
+      "deep": 2048,
+      "summary": 1024
+    },
+    "use_subprocess_fallback": true
+  },
+  "external": {
+    "openai": {
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "model": "gpt-4o-mini",
+      "token_limit": 2048,
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "grok": {
+      "endpoint": "https://api.x.ai/v1/chat/completions",
+      "model": "grok-2-latest",
+      "token_limit": 2048,
+      "api_key_env": "GROK_API_KEY"
+    },
+    "gemini": {
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      "model": "gemini-1.5-flash",
+      "token_limit": 2048,
+      "api_key_env": "GEMINI_API_KEY"
+    }
+  },
+  "routing_rules": {
+    "skip_tags": ["spam", "invalid", "test"],
+    "deep_tags": ["all-in", "bubble", "final-table", "hero-call", "icm"],
+    "deep_pot_threshold": 250,
+    "light_pot_threshold": 25,
+    "deep_variants": ["tournament", "mtt", "sng"],
+    "skip_variants": ["play-money"]
+  },
+  "performance": {
+    "max_batch_size": 32
+  },
+  "dossier": {
+    "directory": "dossiers",
+    "max_entries": 300,
+    "max_chars": 8000
+  }
+}
