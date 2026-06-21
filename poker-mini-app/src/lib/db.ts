@@ -2,7 +2,11 @@ import { createClient } from "@libsql/client";
 
 // Initialize the Turso client
 // In local development, we can fallback to a local sqlite file if NEYNAR_API_KEY isn't fully mocked
-const url = process.env.TURSO_DATABASE_URL || "file:./poker_local.db";
+import os from "os";
+import path from "path";
+
+const localDbPath = path.join(os.tmpdir(), "poker_local.db");
+const url = process.env.TURSO_DATABASE_URL || `file:${localDbPath}`;
 const authToken = process.env.TURSO_AUTH_TOKEN;
 
 export const db = createClient({
