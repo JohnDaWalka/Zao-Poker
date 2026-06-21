@@ -37,6 +37,8 @@ export function HomeTab() {
   
   // Lobby states
   const [lobbyTables, setLobbyTables] = useState<TableData[]>([]);
+  const [joinError, setJoinError] = useState<string>("");
+  const [joiningTableId, setJoiningTableId] = useState<string | null>(null);
   
   // Active table states
   const [tableStatus, setTableStatus] = useState<string>("waiting");
@@ -61,6 +63,7 @@ export function HomeTab() {
   const [playerCurrentBet, setPlayerCurrentBet] = useState(0);
   const [seatedPlayers, setSeatedPlayers] = useState<any[]>([]);
   const [currentTurnFid, setCurrentTurnFid] = useState<number | null>(null);
+  const [isTrainingMode, setIsTrainingMode] = useState(false);
 
   // Blind states
   const [currentBlinds, setCurrentBlinds] = useState<{sb: number, bb: number, ante: number} | null>(null);
@@ -73,10 +76,15 @@ export function HomeTab() {
       try {
         const res = await fetch("/api/table");
         const data = await res.json();
-        if (data.success) {
+        if (res.ok && data.success) {
           setLobbyTables(data.tables);
+          setJoinError("");
+        } else {
+          setJoinError(data.error || "Unable to load poker tables");
         }
-      } catch (e) {}
+      } catch (e) {
+        setJoinError("Unable to connect to the poker server");
+      }
     };
     fetchLobby();
     const interval = setInterval(fetchLobby, 4000);
@@ -137,8 +145,10 @@ export function HomeTab() {
   };
 
   const handleJoinTable = async (tableId: string) => {
-    setSelectedTableId(tableId);
-    setGameState("table");
+    if (joiningTableId) return;
+
+    setJoiningTableId(tableId);
+    setJoinError("");
 
     const payload = {
       fid: context?.user?.fid || 9999,
@@ -148,16 +158,20 @@ export function HomeTab() {
       action: "join"
     };
 
-    sendEvent({ action: "user_joined_table", table_id: tableId });
+    try {
+      const res = await fetch("/api/table", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
 
-    const res = await fetch("/api/table", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    
-    const data = await res.json();
-    if (data.success && data.gameState) {
+      if (!res.ok || !data.success || !data.gameState) {
+        throw new Error(data.error || "Unable to join this table");
+      }
+
+      setSelectedTableId(tableId);
+      setGameState("table");
       setTableName(data.gameState.name);
       setTableStatus(data.gameState.status);
       setStartTime(data.gameState.start_time);
@@ -167,18 +181,23 @@ export function HomeTab() {
       setSeatedPlayers(data.players || []);
       if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
       if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
+      void sendEvent({ action: "user_joined_table", table_id: tableId });
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : "Unable to join this table");
+    } finally {
+      setJoiningTableId(null);
     }
   };
 
   const handleLeaveTable = async () => {
-    sendEvent({ action: "user_left_table", table_id: selectedTableId });
+    void sendEvent({ action: "user_left_table", table_id: selectedTableId });
     await fetch("/api/table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         fid: context?.user?.fid || 9999,
         table_id: selectedTableId,
-        action: "fold"
+        action: "leave"
       })
     });
     setGameState("lobby");
@@ -222,10 +241,6 @@ export function HomeTab() {
 
   const handleAction = async (action: string, customAmount?: number) => {
     sendEvent({ action });
-    if (action === "fold") {
-      await handleLeaveTable();
-      return;
-    }
 
     let amount = 0;
     const toCall = currentBet - playerCurrentBet;
@@ -291,6 +306,11 @@ export function HomeTab() {
         </header>
 
         <div className="flex-1 flex flex-col space-y-4 max-w-md mx-auto w-full">
+          {joinError && (
+            <div role="alert" className="rounded-lg border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-200">
+              {joinError}
+            </div>
+          )}
           {lobbyTables.length === 0 ? (
             <div className="text-center text-gray-500 py-10">Loading active tournaments...</div>
           ) : (
@@ -331,14 +351,26 @@ export function HomeTab() {
                   </div>
                   <button
                     onClick={() => handleJoinTable(table.id)}
-                    disabled={table.start_time && new Date(table.start_time).getTime() - currentTime.getTime() > 60000}
+                    disabled={
+                      joiningTableId !== null ||
+                      table.player_count >= table.max_players ||
+                      (table.status === "playing" && table.player_count >= 2)
+                    }
                     className={`text-sm font-bold py-2 px-5 rounded-lg shadow transition-transform transform ${
-                      (!table.start_time || new Date(table.start_time).getTime() - currentTime.getTime() <= 60000)
+                      joiningTableId === null &&
+                      table.player_count < table.max_players &&
+                      (table.status !== "playing" || table.player_count < 2)
                         ? "bg-green-600 hover:bg-green-700 text-white active:scale-95"
                         : "bg-gray-700 text-gray-500 cursor-not-allowed"
                     }`}
                   >
-                    {(!table.start_time || new Date(table.start_time).getTime() - currentTime.getTime() <= 60000) ? "Join Room" : "Scheduled"}
+                    {joiningTableId === table.id
+                      ? "Joining..."
+                      : table.player_count >= table.max_players
+                        ? "Full"
+                        : table.status === "playing" && table.player_count >= 2
+                          ? "In Progress"
+                          : "Join Room"}
                   </button>
                 </div>
               </div>
@@ -442,12 +474,75 @@ export function HomeTab() {
               </span>
             </div>
           )}
-          <button
-            onClick={handleLeaveTable}
-            className="text-xs text-red-400 font-bold bg-gray-950 px-3 py-1 rounded-full border border-gray-900 hover:bg-red-950"
-          >
-            Leave
-          </button>
+          <div className="flex space-x-2 shrink-0">
+            <button
+              onClick={() => setIsTrainingMode(!isTrainingMode)}
+              className={`text-[10px] font-bold px-2 py-1 rounded-full border ${isTrainingMode ? 'bg-yellow-600 border-yellow-500 text-white shadow-[0_0_10px_rgba(202,138,4,0.5)]' : 'bg-gray-950 border-gray-900 text-gray-600'}`}
+            >
+              {isTrainingMode ? 'Training ON' : 'Training OFF'}
+            </button>
+            <button
+              onClick={handleLeaveTable}
+              className="text-xs text-red-400 font-bold bg-gray-950 px-3 py-1 rounded-full border border-gray-900 hover:bg-red-950"
+            >
+              Leave
+            </button>
+          </div>
+        </div>
+
+        {/* Opponents Rendering */}
+        <div className="flex w-full justify-around mt-4 shrink-0">
+          {seatedPlayers.filter(p => p.fid !== (context?.user?.fid || 9999)).map((opponent) => (
+             <div key={opponent.fid} className={`flex flex-col items-center transition-opacity ${opponent.status === 'folded' ? 'opacity-40' : 'opacity-100'}`}>
+               <div className="relative">
+                 {opponent.pfp_url ? (
+                   <img src={opponent.pfp_url} alt="Pfp" className={`w-12 h-12 rounded-full border-2 ${currentTurnFid === opponent.fid ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]' : 'border-gray-700'}`} />
+                 ) : (
+                   <div className={`w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center font-bold text-lg border-2 ${currentTurnFid === opponent.fid ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]' : 'border-gray-700'}`}>
+                     {opponent.username[0]}
+                   </div>
+                 )}
+                 {/* Current Bet Indicator */}
+                 {opponent.current_bet > 0 && (
+                   <div className="absolute -bottom-2 -right-2 bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-blue-400 shadow-sm">
+                     ${opponent.current_bet}
+                   </div>
+                 )}
+               </div>
+
+               <div className="mt-1 text-center">
+                 <div className="text-[10px] text-gray-300 font-bold truncate w-16">@{opponent.username}</div>
+                 <div className="text-[10px] text-yellow-500 font-bold">${opponent.stack_size}</div>
+               </div>
+
+               {/* Hole Cards */}
+               <div className="flex space-x-1 mt-1">
+                 {opponent.hand && opponent.status === 'playing' ? (
+                   opponent.hand.split(",").map((card: string, i: number) => {
+                     const isVisible = isTrainingMode || phase === "showdown";
+                     if (!isVisible) {
+                       return (
+                         <div key={i} className="bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-red-800 to-red-950 w-6 h-8 rounded border border-gray-600 flex items-center justify-center shadow">
+                           <span className="text-gray-900 text-[6px] font-bold tracking-widest opacity-30">ZAO</span>
+                         </div>
+                       );
+                     } else {
+                       const { rank, suitSymbol, isRed } = getCardDisplay(card);
+                       return (
+                         <div key={i} className={`bg-white font-bold text-[10px] w-6 h-8 rounded border border-gray-300 flex items-center justify-center shadow ${isRed ? "text-red-600" : "text-black"}`}>
+                           {rank}{suitSymbol}
+                         </div>
+                       );
+                     }
+                   })
+                 ) : opponent.status === 'folded' ? (
+                   <div className="text-[8px] text-gray-600 italic">Folded</div>
+                 ) : (
+                   <div className="text-[8px] text-gray-600 italic">No Cards</div>
+                 )}
+               </div>
+              </div>
+           ))}
         </div>
 
         {/* Table & Community Cards */}

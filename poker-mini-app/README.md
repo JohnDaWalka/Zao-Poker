@@ -26,7 +26,7 @@ cp .env.example .env.local
 ```
 Configure your keys:
 *   `NEXT_PUBLIC_NEYNAR_CLIENT_ID`: Your Neynar app client ID
-*   `TURSO_CONNECTION_URL`: Turso DB Connection URI
+*   `TURSO_DATABASE_URL`: Turso DB Connection URI (`TURSO_CONNECTION_URL` is also accepted for backwards compatibility)
 *   `TURSO_AUTH_TOKEN`: Turso DB Access Token
 
 ### 3. Running in Development
