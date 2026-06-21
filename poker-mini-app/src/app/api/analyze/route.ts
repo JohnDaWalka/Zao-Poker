@@ -4,8 +4,9 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    // Call the Python AI-Poker-Coach FastAPI bridge running on port 8000
-    const aiResponse = await fetch("http://127.0.0.1:8000/api/analyze_action", {
+    // Call the Python AI-Poker-Coach FastAPI bridge
+    const backendUrl = process.env.BACKEND_URL || "http://127.0.0.1:8080";
+    const aiResponse = await fetch(`${backendUrl}/api/analyze_action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
