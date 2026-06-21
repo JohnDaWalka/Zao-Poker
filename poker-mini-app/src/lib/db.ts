@@ -16,15 +16,18 @@ export const db = createClient({
 
 export async function initDb() {
   // Drop tables to force clean schema update
-  await db.execute("DROP TABLE IF EXISTS game_state");
+  await db.execute("DROP TABLE IF EXISTS tables");
   await db.execute("DROP TABLE IF EXISTS players");
+  await db.execute("DROP TABLE IF EXISTS game_state"); // drop deprecated table
 
   await db.execute(`
-    CREATE TABLE IF NOT EXISTS game_state (
+    CREATE TABLE IF NOT EXISTS tables (
       id TEXT PRIMARY KEY,
+      name TEXT,
+      max_players INTEGER DEFAULT 6,
+      status TEXT DEFAULT 'waiting', -- 'waiting', 'playing', 'finished'
       pot_size INTEGER DEFAULT 0,
       current_bet INTEGER DEFAULT 0,
-      current_turn_fid INTEGER,
       board TEXT DEFAULT '',
       deck TEXT DEFAULT '',
       phase TEXT DEFAULT 'preflop',
@@ -35,16 +38,23 @@ export async function initDb() {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS players (
       fid INTEGER PRIMARY KEY,
+      username TEXT,
+      pfp_url TEXT,
+      table_id TEXT,
       stack_size INTEGER DEFAULT 5000,
       hand TEXT DEFAULT '',
       current_bet INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'waiting', -- 'waiting', 'playing', 'folded'
       joined_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
   
-  // Ensure we have a default game state row
+  // Pre-populate default tournament rooms
   await db.execute(`
-    INSERT OR IGNORE INTO game_state (id, pot_size, current_bet, current_turn_fid, board, deck, phase)
-    VALUES ('main_table', 0, 0, NULL, '', '', 'preflop')
+    INSERT OR IGNORE INTO tables (id, name, max_players, status)
+    VALUES 
+      ('room_1', 'Heads-Up GTO Match', 2, 'waiting'),
+      ('room_2', '6-Max Sit & Go Turbo', 6, 'waiting'),
+      ('room_3', 'Meta Labs VR Tourney', 6, 'waiting')
   `);
 }

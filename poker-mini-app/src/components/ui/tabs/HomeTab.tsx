@@ -18,10 +18,29 @@ function getCardDisplay(card: string) {
   return { rank, suitSymbol, isRed };
 }
 
+interface TableData {
+  id: string;
+  name: string;
+  max_players: number;
+  status: "waiting" | "playing" | "finished";
+  player_count: number;
+}
+
 export function HomeTab() {
   const { context } = useMiniApp();
   const { user: neynarUser } = useNeynarUser(context || undefined);
+  
+  // Navigation states
   const [gameState, setGameState] = useState<"lobby" | "table">("lobby");
+  const [selectedTableId, setSelectedTableId] = useState<string>("");
+  
+  // Lobby states
+  const [lobbyTables, setLobbyTables] = useState<TableData[]>([]);
+  
+  // Active table states
+  const [tableStatus, setTableStatus] = useState<string>("waiting");
+  const [tableName, setTableName] = useState<string>("");
+  const [maxPlayers, setMaxPlayers] = useState<number>(6);
   const [potSize, setPotSize] = useState(0);
   const [playerStack, setPlayerStack] = useState(5000);
   const [coachFeedback, setCoachFeedback] = useState<any>(null);
@@ -30,25 +49,46 @@ export function HomeTab() {
   const [board, setBoard] = useState<string[]>([]);
   const [playerCards, setPlayerCards] = useState<string[]>([]);
   const [phase, setPhase] = useState<string>("preflop");
-  
-  // Betting states
   const [currentBet, setCurrentBet] = useState(0);
   const [playerCurrentBet, setPlayerCurrentBet] = useState(0);
+  const [seatedPlayers, setSeatedPlayers] = useState<any[]>([]);
 
-  // Poll database for table state
+  // 1. Poll Lobby list
   useEffect(() => {
-    if (gameState !== "table") return;
-    const interval = setInterval(async () => {
+    if (gameState !== "lobby") return;
+    const fetchLobby = async () => {
       try {
         const res = await fetch("/api/table");
         const data = await res.json();
         if (data.success) {
+          setLobbyTables(data.tables);
+        }
+      } catch (e) {}
+    };
+    fetchLobby();
+    const interval = setInterval(fetchLobby, 4000);
+    return () => clearInterval(interval);
+  }, [gameState]);
+
+  // 2. Poll Active Table / Waiting Room state
+  useEffect(() => {
+    if (gameState !== "table" || !selectedTableId) return;
+    const fetchTableState = async () => {
+      try {
+        const res = await fetch(`/api/table?table_id=${selectedTableId}`);
+        const data = await res.json();
+        if (data.success && data.gameState) {
+          setTableName(data.gameState.name);
+          setMaxPlayers(data.gameState.max_players);
+          setTableStatus(data.gameState.status);
           setPotSize(data.gameState.pot_size);
           setPhase(data.gameState.phase);
           setCurrentBet(data.gameState.current_bet || 0);
           setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+          setSeatedPlayers(data.players || []);
 
-          const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
+          const userFid = context?.user?.fid || 9999;
+          const me = data.players.find((p: any) => p.fid === userFid);
           if (me) {
             setPlayerStack(me.stack_size);
             setPlayerCurrentBet(me.current_bet || 0);
@@ -56,9 +96,11 @@ export function HomeTab() {
           }
         }
       } catch (e) {}
-    }, 1500); // Snappy polling
+    };
+    fetchTableState();
+    const interval = setInterval(fetchTableState, 1500);
     return () => clearInterval(interval);
-  }, [gameState, context?.user?.fid]);
+  }, [gameState, selectedTableId, context?.user?.fid]);
 
   const sendEvent = async (eventData: any) => {
     try {
@@ -73,52 +115,66 @@ export function HomeTab() {
           }),
         }
       );
-    } catch (e) {
-      console.error("Event error:", e);
-    }
+    } catch (e) {}
   };
 
-  const triggerNotification = async () => {
-    if (!context?.user?.fid) return;
-    try {
-      await fetch("/api/send-notification", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fid: context.user.fid,
-          notificationDetails: { token: "mock-token", url: "mock-url" }
-        }),
-      });
-    } catch (e) {
-      console.error("Failed to push notification", e);
-    }
-  };
+  const handleJoinTable = async (tableId: string) => {
+    setSelectedTableId(tableId);
+    setGameState("table");
 
-  const handleJoinTable = async () => {
-    sendEvent({ action: "user_joined_table" });
-    
-    // Add player to DB
+    const payload = {
+      fid: context?.user?.fid || 9999,
+      username: neynarUser?.username || `User#${context?.user?.fid || 9999}`,
+      pfp_url: neynarUser?.pfp_url || "",
+      table_id: tableId,
+      action: "join"
+    };
+
+    sendEvent({ action: "user_joined_table", table_id: tableId });
+
     const res = await fetch("/api/table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fid: context?.user?.fid || 9999, action: "join" })
+      body: JSON.stringify(payload)
     });
     
     const data = await res.json();
-    if (data.success) {
+    if (data.success && data.gameState) {
+      setTableName(data.gameState.name);
+      setTableStatus(data.gameState.status);
       setPotSize(data.gameState.pot_size);
       setPhase(data.gameState.phase);
-      setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
-      const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
-      if (me) {
-        setPlayerStack(me.stack_size);
-        setPlayerCurrentBet(me.current_bet || 0);
-        setPlayerCards(me.hand ? me.hand.split(",") : []);
-      }
+      setSeatedPlayers(data.players || []);
     }
+  };
 
-    setGameState("table");
+  const handleLeaveTable = async () => {
+    sendEvent({ action: "user_left_table", table_id: selectedTableId });
+    await fetch("/api/table", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fid: context?.user?.fid || 9999,
+        table_id: selectedTableId,
+        action: "fold"
+      })
+    });
+    setGameState("lobby");
+    setSelectedTableId("");
+    setCoachFeedback(null);
+  };
+
+  const handleStartPractice = async () => {
+    await fetch("/api/table", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fid: context?.user?.fid || 9999,
+        table_id: selectedTableId,
+        action: "deal"
+      })
+    });
   };
 
   const handleNextHand = async () => {
@@ -126,38 +182,28 @@ export function HomeTab() {
     const res = await fetch("/api/table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fid: context?.user?.fid || 9999, action: "deal" })
+      body: JSON.stringify({
+        fid: context?.user?.fid || 9999,
+        table_id: selectedTableId,
+        action: "deal"
+      })
     });
     const data = await res.json();
-    if (data.success) {
+    if (data.success && data.gameState) {
       setPotSize(data.gameState.pot_size);
       setPhase(data.gameState.phase);
       setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
-      const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
-      if (me) {
-        setPlayerStack(me.stack_size);
-        setPlayerCurrentBet(me.current_bet || 0);
-        setPlayerCards(me.hand ? me.hand.split(",") : []);
-      }
     }
   };
 
   const handleAction = async (action: string, customAmount?: number) => {
     sendEvent({ action });
-    triggerNotification();
-
     if (action === "fold") {
-      await fetch("/api/table", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fid: context?.user?.fid || 9999, action })
-      });
-      setGameState("lobby");
+      await handleLeaveTable();
       return;
     }
 
-    // Determine final bet amount based on Hold'em action
     let amount = 0;
     const toCall = currentBet - playerCurrentBet;
 
@@ -169,28 +215,25 @@ export function HomeTab() {
       amount = playerStack;
     }
 
-    // Update DB
     const res = await fetch("/api/table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fid: context?.user?.fid || 9999, action, amount })
+      body: JSON.stringify({
+        fid: context?.user?.fid || 9999,
+        table_id: selectedTableId,
+        action,
+        amount
+      })
     });
 
     const data = await res.json();
-    if (data.success) {
+    if (data.success && data.gameState) {
       setPotSize(data.gameState.pot_size);
       setPhase(data.gameState.phase);
       setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
-      const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
-      if (me) {
-        setPlayerStack(me.stack_size);
-        setPlayerCurrentBet(me.current_bet || 0);
-        setPlayerCards(me.hand ? me.hand.split(",") : []);
-      }
     }
 
-    // Call Python backend for analysis
     try {
       const resAnalyze = await fetch("/api/analyze", {
         method: "POST",
@@ -205,40 +248,142 @@ export function HomeTab() {
         })
       });
       const resData = await resAnalyze.json();
-      console.log("Coach Feedback:", resData);
       setCoachFeedback(resData);
-    } catch (e) {
-      console.error("Coach API error:", e);
-    }
+    } catch (e) {}
   };
 
-  // No-Limit Hold'em Action HUD Mapping
   const toCall = currentBet - playerCurrentBet;
 
+  // LOBBY VIEW
   if (gameState === "lobby") {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
-        <h1 className="text-3xl font-bold mb-4">ZAO Poker 6-Max Tournament Circuit</h1>
-        <p className="mb-6 text-gray-400">Join the table to start playing.</p>
-        <button
-          onClick={handleJoinTable}
-          className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform transform hover:scale-105"
-        >
-          Join Table
-        </button>
+      <div className="flex flex-col min-h-screen bg-gray-950 text-white p-4">
+        <header className="py-6 text-center border-b border-gray-900 mb-6">
+          <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-500">
+            ZAO Poker Tournament Lobby
+          </h1>
+          <p className="text-xs text-gray-500 mt-1">Select a tournament table to join from your Farcaster ID</p>
+        </header>
+
+        <div className="flex-1 flex flex-col space-y-4 max-w-md mx-auto w-full">
+          {lobbyTables.length === 0 ? (
+            <div className="text-center text-gray-500 py-10">Loading active tournaments...</div>
+          ) : (
+            lobbyTables.map((table) => (
+              <div
+                key={table.id}
+                className="bg-gray-900 border border-gray-800 hover:border-gray-700 p-4 rounded-xl flex flex-col justify-between shadow-lg transition-all"
+              >
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-lg text-gray-200">{table.name}</h3>
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase ${
+                      table.status === "playing"
+                        ? "bg-yellow-900 text-yellow-200"
+                        : "bg-green-900 text-green-200"
+                    }`}
+                  >
+                    {table.status}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center mt-2">
+                  <div className="text-sm text-gray-400">
+                    Seated: <span className="text-white font-bold">{table.player_count}/{table.max_players}</span>
+                  </div>
+                  <button
+                    onClick={() => handleJoinTable(table.id)}
+                    className="bg-green-600 hover:bg-green-700 text-white text-sm font-bold py-2 px-5 rounded-lg shadow transition-transform transform active:scale-95"
+                  >
+                    Join Table
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     );
   }
 
+  // WAITING ROOM VIEW
+  if (gameState === "table" && tableStatus === "waiting") {
+    return (
+      <div className="flex flex-col min-h-screen bg-gray-950 text-white p-4 justify-between">
+        <header className="py-4 text-center border-b border-gray-900">
+          <h2 className="text-xl font-bold text-gray-300">Waiting Room</h2>
+          <p className="text-sm text-yellow-500 font-semibold">{tableName}</p>
+        </header>
+
+        <div className="my-auto max-w-md mx-auto w-full p-4 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl">
+          <h3 className="text-sm font-semibold tracking-wider text-gray-500 uppercase mb-4 text-center">
+            Seated Players ({seatedPlayers.length}/{maxPlayers})
+          </h3>
+
+          <div className="flex flex-col space-y-3 mb-6">
+            {seatedPlayers.map((player) => (
+              <div key={player.fid} className="flex items-center space-x-3 bg-gray-950 p-2.5 rounded-lg border border-gray-900">
+                {player.pfp_url ? (
+                  <img src={player.pfp_url} alt="Pfp" className="w-9 h-9 rounded-full" />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-gray-800 flex items-center justify-center font-bold text-xs">
+                    {player.username[0]}
+                  </div>
+                )}
+                <div>
+                  <div className="font-bold text-sm text-gray-200">@{player.username}</div>
+                  <div className="text-xs text-gray-500">FID: {player.fid}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col space-y-2">
+            <button
+              onClick={handleStartPractice}
+              className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg text-center text-sm shadow transition-transform transform active:scale-95"
+            >
+              Start Hand (Simulate Opponents) 🃏
+            </button>
+            <button
+              onClick={handleLeaveTable}
+              className="bg-gray-800 hover:bg-gray-700 text-gray-400 font-semibold py-2 rounded-lg text-center text-sm"
+            >
+              Leave Room
+            </button>
+          </div>
+        </div>
+
+        <footer className="text-center text-xs text-gray-600 py-2">
+          Waiting for other players to launch their Farcaster Mini-App...
+        </footer>
+      </div>
+    );
+  }
+
+  // ACTIVE TABLE GAMEPLAY VIEW
   return (
     <div className="flex flex-col h-screen w-full relative overflow-hidden bg-[url('https://i.imgur.com/k2j4j3V.jpeg')] bg-cover bg-center">
       <div className="absolute inset-0 bg-black bg-opacity-60 z-0 pointer-events-none"></div>
       
       <div className="z-10 flex flex-col items-center justify-between h-full p-4 overflow-y-auto">
         
+        {/* Header bar */}
+        <div className="flex justify-between items-center w-full max-w-md shrink-0">
+          <span className="text-xs text-gray-400 font-bold bg-gray-950 px-3 py-1 rounded-full border border-gray-900">
+            🏆 {tableName}
+          </span>
+          <button
+            onClick={handleLeaveTable}
+            className="text-xs text-red-400 font-bold bg-gray-950 px-3 py-1 rounded-full border border-gray-900 hover:bg-red-950"
+          >
+            Leave
+          </button>
+        </div>
+
         {/* Table & Community Cards */}
-        <div className="mt-4 flex flex-col items-center shrink-0 w-full">
-          <div className="text-sm font-semibold tracking-widest text-gray-400 uppercase mb-2">
+        <div className="mt-2 flex flex-col items-center shrink-0 w-full">
+          <div className="text-xs font-semibold tracking-widest text-gray-400 uppercase mb-2">
             Street: <span className="text-yellow-500 font-bold">{phase}</span>
           </div>
 
@@ -270,7 +415,7 @@ export function HomeTab() {
 
         {/* Coach Dashboard */}
         {coachFeedback && (
-          <div className="w-full max-w-md mt-8 p-4 bg-gray-900 border border-purple-500 rounded-lg shadow-xl shrink-0">
+          <div className="w-full max-w-md mt-6 p-4 bg-gray-900 border border-purple-500 rounded-lg shadow-xl shrink-0">
             <h3 className="text-purple-400 font-bold text-lg mb-2 flex items-center">
               <span className="mr-2">🤖</span> PokerCoachJohnny (CFR Analysis)
             </h3>
@@ -323,7 +468,7 @@ export function HomeTab() {
         </div>
 
         {/* Dynamic No-Limit Hold'em HUD */}
-        <div className="w-full max-w-md bg-gray-900 bg-opacity-95 p-3 rounded-lg border border-gray-800">
+        <div className="w-full max-w-md bg-gray-900 bg-opacity-95 p-3 rounded-lg border border-gray-800 mb-2">
           {phase === "showdown" ? (
             <div className="text-center space-y-3 py-2">
               <p className="text-green-400 font-bold text-lg">
