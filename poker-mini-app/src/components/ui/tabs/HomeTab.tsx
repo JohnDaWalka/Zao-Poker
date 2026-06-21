@@ -24,6 +24,7 @@ interface TableData {
   max_players: number;
   status: "waiting" | "playing" | "finished";
   player_count: number;
+  start_time: string;
 }
 
 export function HomeTab() {
@@ -41,6 +42,13 @@ export function HomeTab() {
   const [tableStatus, setTableStatus] = useState<string>("waiting");
   const [tableName, setTableName] = useState<string>("");
   const [maxPlayers, setMaxPlayers] = useState<number>(6);
+  const [startTime, setStartTime] = useState<string>("");
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const [potSize, setPotSize] = useState(0);
   const [playerStack, setPlayerStack] = useState(5000);
   const [coachFeedback, setCoachFeedback] = useState<any>(null);
@@ -52,6 +60,11 @@ export function HomeTab() {
   const [currentBet, setCurrentBet] = useState(0);
   const [playerCurrentBet, setPlayerCurrentBet] = useState(0);
   const [seatedPlayers, setSeatedPlayers] = useState<any[]>([]);
+  const [currentTurnFid, setCurrentTurnFid] = useState<number | null>(null);
+
+  // Blind states
+  const [currentBlinds, setCurrentBlinds] = useState<{sb: number, bb: number, ante: number} | null>(null);
+  const [nextLevelInSecs, setNextLevelInSecs] = useState<number>(0);
 
   // 1. Poll Lobby list
   useEffect(() => {
@@ -75,17 +88,22 @@ export function HomeTab() {
     if (gameState !== "table" || !selectedTableId) return;
     const fetchTableState = async () => {
       try {
-        const res = await fetch(`/api/table?table_id=${selectedTableId}`);
+        const userFid = context?.user?.fid || 9999;
+        const res = await fetch(`/api/table?table_id=${selectedTableId}&fid=${userFid}`);
         const data = await res.json();
         if (data.success && data.gameState) {
           setTableName(data.gameState.name);
           setMaxPlayers(data.gameState.max_players);
           setTableStatus(data.gameState.status);
+          setStartTime(data.gameState.start_time);
           setPotSize(data.gameState.pot_size);
           setPhase(data.gameState.phase);
           setCurrentBet(data.gameState.current_bet || 0);
           setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
           setSeatedPlayers(data.players || []);
+          setCurrentBlinds(data.gameState.current_blinds);
+          setNextLevelInSecs(data.gameState.next_level_in_secs);
+          setCurrentTurnFid(data.gameState.current_turn_fid);
 
           const userFid = context?.user?.fid || 9999;
           const me = data.players.find((p: any) => p.fid === userFid);
@@ -142,10 +160,13 @@ export function HomeTab() {
     if (data.success && data.gameState) {
       setTableName(data.gameState.name);
       setTableStatus(data.gameState.status);
+      setStartTime(data.gameState.start_time);
       setPotSize(data.gameState.pot_size);
       setPhase(data.gameState.phase);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
       setSeatedPlayers(data.players || []);
+      if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
+      if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
     }
   };
 
@@ -194,6 +215,8 @@ export function HomeTab() {
       setPhase(data.gameState.phase);
       setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+      if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
+      if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
     }
   };
 
@@ -232,6 +255,8 @@ export function HomeTab() {
       setPhase(data.gameState.phase);
       setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+      if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
+      if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
     }
 
     try {
@@ -290,12 +315,30 @@ export function HomeTab() {
                 <div className="flex justify-between items-center mt-2">
                   <div className="text-sm text-gray-400">
                     Seated: <span className="text-white font-bold">{table.player_count}/{table.max_players}</span>
+                    {table.start_time && (
+                      <div className="text-yellow-500 font-mono text-xs mt-1">
+                        Starts in {(() => {
+                          const start = new Date(table.start_time);
+                          const diffMs = start.getTime() - currentTime.getTime();
+                          if (diffMs <= 0) return "00:00";
+                          const diffSecs = Math.floor(diffMs / 1000);
+                          const mins = Math.floor(diffSecs / 60);
+                          const secs = diffSecs % 60;
+                          return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                        })()}
+                      </div>
+                    )}
                   </div>
                   <button
                     onClick={() => handleJoinTable(table.id)}
-                    className="bg-green-600 hover:bg-green-700 text-white text-sm font-bold py-2 px-5 rounded-lg shadow transition-transform transform active:scale-95"
+                    disabled={table.start_time && new Date(table.start_time).getTime() - currentTime.getTime() > 60000}
+                    className={`text-sm font-bold py-2 px-5 rounded-lg shadow transition-transform transform ${
+                      (!table.start_time || new Date(table.start_time).getTime() - currentTime.getTime() <= 60000)
+                        ? "bg-green-600 hover:bg-green-700 text-white active:scale-95"
+                        : "bg-gray-700 text-gray-500 cursor-not-allowed"
+                    }`}
                   >
-                    Join Table
+                    {(!table.start_time || new Date(table.start_time).getTime() - currentTime.getTime() <= 60000) ? "Join Room" : "Scheduled"}
                   </button>
                 </div>
               </div>
@@ -320,6 +363,23 @@ export function HomeTab() {
             Seated Players ({seatedPlayers.length}/{maxPlayers})
           </h3>
 
+          {startTime && (
+            <div className="text-center mb-6">
+              <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Tournament starts in</div>
+              <div className="text-4xl font-mono text-yellow-500 font-bold bg-gray-950 py-3 rounded-lg border border-gray-800 shadow-inner">
+                {(() => {
+                  const start = new Date(startTime);
+                  const diffMs = start.getTime() - currentTime.getTime();
+                  if (diffMs <= 0) return "00:00";
+                  const diffSecs = Math.floor(diffMs / 1000);
+                  const mins = Math.floor(diffSecs / 60);
+                  const secs = diffSecs % 60;
+                  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                })()}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col space-y-3 mb-6">
             {seatedPlayers.map((player) => (
               <div key={player.fid} className="flex items-center space-x-3 bg-gray-950 p-2.5 rounded-lg border border-gray-900">
@@ -340,14 +400,14 @@ export function HomeTab() {
 
           <div className="flex flex-col space-y-2">
             <button
-              onClick={handleStartPractice}
-              className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg text-center text-sm shadow transition-transform transform active:scale-95"
+              disabled
+              className="bg-gray-800 text-gray-500 font-bold py-3 rounded-lg text-center text-sm shadow cursor-not-allowed"
             >
-              Start Hand (Simulate Opponents) 🃏
+              Waiting for Tournament to Start... ⏱️
             </button>
             <button
               onClick={handleLeaveTable}
-              className="bg-gray-800 hover:bg-gray-700 text-gray-400 font-semibold py-2 rounded-lg text-center text-sm"
+              className="bg-red-900 bg-opacity-20 hover:bg-red-900 hover:bg-opacity-40 text-red-400 font-semibold py-2 rounded-lg text-center text-sm transition-colors"
             >
               Leave Room
             </button>
@@ -373,6 +433,15 @@ export function HomeTab() {
           <span className="text-xs text-gray-400 font-bold bg-gray-950 px-3 py-1 rounded-full border border-gray-900">
             🏆 {tableName}
           </span>
+          {currentBlinds && (
+            <div className="text-[10px] text-gray-400 font-bold bg-gray-950 px-2 py-1 rounded-full border border-gray-900 mx-2 text-center">
+              Blinds: <span className="text-yellow-500">${currentBlinds.sb}/${currentBlinds.bb}</span>
+              {currentBlinds.ante > 0 && ` (Ante $${currentBlinds.ante})`}
+              <span className="block text-gray-500 mt-0.5">
+                Next: {Math.floor(nextLevelInSecs / 60).toString().padStart(2, '0')}:{(nextLevelInSecs % 60).toString().padStart(2, '0')}
+              </span>
+            </div>
+          )}
           <button
             onClick={handleLeaveTable}
             className="text-xs text-red-400 font-bold bg-gray-950 px-3 py-1 rounded-full border border-gray-900 hover:bg-red-950"
@@ -414,7 +483,7 @@ export function HomeTab() {
         </div>
 
         {/* Coach Dashboard */}
-        {coachFeedback && (
+        {coachFeedback && selectedTableId === "room_1" && (
           <div className="w-full max-w-md mt-6 p-4 bg-gray-900 border border-purple-500 rounded-lg shadow-xl shrink-0">
             <h3 className="text-purple-400 font-bold text-lg mb-2 flex items-center">
               <span className="mr-2">🤖</span> PokerCoachJohnny (CFR Analysis)
@@ -488,8 +557,14 @@ export function HomeTab() {
                 <span>Active Bet: <span className="text-blue-400 font-bold">${currentBet}</span></span>
               </div>
               
-              <div className="grid grid-cols-2 gap-2">
-                <button
+              {currentTurnFid !== (context?.user?.fid || 9999) ? (
+                <div className="flex items-center justify-center p-4 bg-gray-800 rounded-lg">
+                  <span className="text-gray-400 font-semibold animate-pulse">Waiting for other players...</span>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
                   onClick={() => handleAction("fold")}
                   className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 rounded-lg text-sm"
                 >
@@ -540,13 +615,15 @@ export function HomeTab() {
                     </button>
                   </>
                 )}
-                <button
-                  onClick={() => handleAction("all_in")}
-                  className="bg-red-900 hover:bg-red-950 text-white text-xs font-bold py-1.5 rounded"
-                >
-                  All In (${playerStack})
-                </button>
-              </div>
+                    <button
+                      onClick={() => handleAction("all_in")}
+                      className="bg-red-900 hover:bg-red-950 text-white text-xs font-bold py-1.5 rounded"
+                    >
+                      All In (${playerStack})
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
