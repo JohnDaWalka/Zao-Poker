@@ -4,6 +4,20 @@ import { useState, useEffect } from "react";
 import { useMiniApp } from "@neynar/react";
 import { useNeynarUser } from "~/hooks/useNeynarUser";
 
+// Helper to convert card string (e.g. "Ah") to display components
+function getCardDisplay(card: string) {
+  if (!card || card.length < 2) return { rank: "", suitSymbol: "", isRed: false };
+  const rank = card[0] === "T" ? "10" : card[0];
+  const suit = card[1];
+  let suitSymbol = "";
+  let isRed = false;
+  if (suit === "h") { suitSymbol = "♥"; isRed = true; }
+  else if (suit === "d") { suitSymbol = "♦"; isRed = true; }
+  else if (suit === "c") { suitSymbol = "♣"; isRed = false; }
+  else if (suit === "s") { suitSymbol = "♠"; isRed = false; }
+  return { rank, suitSymbol, isRed };
+}
+
 export function HomeTab() {
   const { context } = useMiniApp();
   const { user: neynarUser } = useNeynarUser(context || undefined);
@@ -11,6 +25,11 @@ export function HomeTab() {
   const [potSize, setPotSize] = useState(0);
   const [playerStack, setPlayerStack] = useState(5000);
   const [coachFeedback, setCoachFeedback] = useState<any>(null);
+  
+  // Game loop states
+  const [board, setBoard] = useState<string[]>([]);
+  const [playerCards, setPlayerCards] = useState<string[]>([]);
+  const [phase, setPhase] = useState<string>("preflop");
 
   // Poll database for table state
   useEffect(() => {
@@ -21,11 +40,17 @@ export function HomeTab() {
         const data = await res.json();
         if (data.success) {
           setPotSize(data.gameState.pot_size);
+          setPhase(data.gameState.phase);
+          setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+
           const me = data.players.find((p: any) => p.fid === context?.user?.fid);
-          if (me) setPlayerStack(me.stack_size);
+          if (me) {
+            setPlayerStack(me.stack_size);
+            setPlayerCards(me.hand ? me.hand.split(",") : []);
+          }
         }
       } catch (e) {}
-    }, 3000);
+    }, 1500); // Snappy polling (1.5 seconds)
     return () => clearInterval(interval);
   }, [gameState, context?.user?.fid]);
 
@@ -67,19 +92,59 @@ export function HomeTab() {
     sendEvent({ action: "user_joined_table" });
     
     // Add player to DB
-    await fetch("/api/table", {
+    const res = await fetch("/api/table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fid: context?.user?.fid, action: "join" })
+      body: JSON.stringify({ fid: context?.user?.fid || 9999, action: "join" })
     });
+    
+    const data = await res.json();
+    if (data.success) {
+      setPotSize(data.gameState.pot_size);
+      setPhase(data.gameState.phase);
+      setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+      const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
+      if (me) {
+        setPlayerStack(me.stack_size);
+        setPlayerCards(me.hand ? me.hand.split(",") : []);
+      }
+    }
 
     setGameState("table");
+  };
+
+  const handleNextHand = async () => {
+    setCoachFeedback(null);
+    const res = await fetch("/api/table", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fid: context?.user?.fid || 9999, action: "deal" })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setPotSize(data.gameState.pot_size);
+      setPhase(data.gameState.phase);
+      setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+      const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
+      if (me) {
+        setPlayerStack(me.stack_size);
+        setPlayerCards(me.hand ? me.hand.split(",") : []);
+      }
+    }
   };
 
   const handleAction = async (action: string) => {
     sendEvent({ action });
     triggerNotification(); // Simulate pushing a notification to the next player
-    if (action === "fold") setGameState("lobby");
+    if (action === "fold") {
+      await fetch("/api/table", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fid: context?.user?.fid || 9999, action })
+      });
+      setGameState("lobby");
+      return;
+    }
 
     // Call Python backend
     let amount = 0;
@@ -89,28 +154,40 @@ export function HomeTab() {
     if (action === "all_in") amount = playerStack;
 
     // Update DB
-    await fetch("/api/table", {
+    const res = await fetch("/api/table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fid: context?.user?.fid || 0, action, amount })
+      body: JSON.stringify({ fid: context?.user?.fid || 9999, action, amount })
     });
 
+    const data = await res.json();
+    if (data.success) {
+      setPotSize(data.gameState.pot_size);
+      setPhase(data.gameState.phase);
+      setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+      const me = data.players.find((p: any) => p.fid === (context?.user?.fid || 9999));
+      if (me) {
+        setPlayerStack(me.stack_size);
+        setPlayerCards(me.hand ? me.hand.split(",") : []);
+      }
+    }
+
     try {
-      const res = await fetch("/api/analyze", {
+      const resAnalyze = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fid: context?.user?.fid || 0,
+          fid: context?.user?.fid || 9999,
           action,
           amount,
-          pot_size: potSize,
-          stack_size: playerStack,
-          cards: ["Ah", "Ac"]
+          pot_size: potSize + amount,
+          stack_size: playerStack - amount,
+          cards: playerCards
         })
       });
-      const data = await res.json();
-      console.log("Coach Feedback:", data);
-      setCoachFeedback(data);
+      const resData = await resAnalyze.json();
+      console.log("Coach Feedback:", resData);
+      setCoachFeedback(resData);
     } catch (e) {
       console.error("Coach API error:", e);
     }
@@ -138,13 +215,30 @@ export function HomeTab() {
       <div className="z-10 flex flex-col items-center justify-between h-full p-4 overflow-y-auto">
         
         {/* Table & Community Cards */}
-        <div className="mt-4 flex flex-col items-center shrink-0">
-          <div className="bg-green-800 bg-opacity-80 rounded-full w-80 h-40 flex items-center justify-center shadow-2xl border-4 border-green-900 relative">
+        <div className="mt-4 flex flex-col items-center shrink-0 w-full">
+          <div className="text-sm font-semibold tracking-widest text-gray-400 uppercase mb-2">
+            Street: <span className="text-yellow-500 font-bold">{phase}</span>
+          </div>
+
+          <div className="bg-green-800 bg-opacity-80 rounded-full w-full max-w-sm h-40 flex items-center justify-center shadow-2xl border-4 border-green-900 relative">
             <div className="flex space-x-2">
-              <div className="bg-white text-black font-bold text-lg w-12 h-16 rounded shadow flex items-center justify-center">10♠</div>
-              <div className="bg-white text-red-600 font-bold text-lg w-12 h-16 rounded shadow flex items-center justify-center">J♥</div>
-              <div className="bg-white text-black font-bold text-lg w-12 h-16 rounded shadow flex items-center justify-center">Q♠</div>
-              <div className="bg-white text-red-600 font-bold text-lg w-12 h-16 rounded shadow flex items-center justify-center">K♦</div>
+              {board.length === 0 ? (
+                <span className="text-green-200 text-sm italic">Waiting for Flop...</span>
+              ) : (
+                board.map((card, i) => {
+                  const { rank, suitSymbol, isRed } = getCardDisplay(card);
+                  return (
+                    <div
+                      key={i}
+                      className={`bg-white font-bold text-lg w-12 h-16 rounded shadow flex items-center justify-center ${
+                        isRed ? "text-red-600" : "text-black"
+                      }`}
+                    >
+                      {rank}{suitSymbol}
+                    </div>
+                  );
+                })
+              )}
             </div>
             <div className="absolute -bottom-8 bg-gray-900 px-4 py-1 rounded-full border border-gray-700">
               <span className="text-yellow-400 font-bold text-lg">Pot: ${potSize}</span>
@@ -159,7 +253,7 @@ export function HomeTab() {
               <span className="mr-2">🤖</span> PokerCoachJohnny (CFR Analysis)
             </h3>
             <p className="text-gray-300 text-sm italic mb-2">"{coachFeedback.analysis || "That was an interesting move..."}"</p>
-            {coachFeedback.gto && coachFeedback.gto.equity && (
+            {coachFeedback.gto && coachFeedback.gto.equity !== undefined && (
               <div className="bg-gray-800 p-2 rounded border border-gray-700">
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-gray-400">Hand Equity (vs Random):</span>
@@ -176,7 +270,7 @@ export function HomeTab() {
         )}
 
         {/* Player Hand */}
-        <div className="mb-6">
+        <div className="mb-6 flex flex-col items-center">
           <div className="flex items-center justify-center space-x-2 mb-2">
             {neynarUser?.pfp_url && (
               <img src={neynarUser.pfp_url} alt="Avatar" className="w-6 h-6 rounded-full" />
@@ -186,28 +280,54 @@ export function HomeTab() {
             </p>
           </div>
           <div className="flex justify-center space-x-2">
-            <div className="bg-white text-red-600 font-bold text-xl w-14 h-20 rounded-lg shadow-lg border-2 border-gray-300 flex items-center justify-center">A♥</div>
-            <div className="bg-white text-black font-bold text-xl w-14 h-20 rounded-lg shadow-lg border-2 border-gray-300 flex items-center justify-center">A♣</div>
+            {playerCards.length === 0 ? (
+              <span className="text-gray-400 text-xs italic">Dealing hole cards...</span>
+            ) : (
+              playerCards.map((card, i) => {
+                const { rank, suitSymbol, isRed } = getCardDisplay(card);
+                return (
+                  <div
+                    key={i}
+                    className={`bg-white font-bold text-xl w-14 h-20 rounded-lg shadow-lg border-2 border-gray-300 flex items-center justify-center ${
+                      isRed ? "text-red-600" : "text-black"
+                    }`}
+                  >
+                    {rank}{suitSymbol}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
         {/* Actions */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 w-full max-w-md">
-          <button onClick={() => handleAction("fold")} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow">
-            Fold
-          </button>
-          <button onClick={() => handleAction("call")} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg shadow">
-            Call ($50)
-          </button>
-          <button onClick={() => handleAction("raise")} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow">
-            Raise ($150)
-          </button>
-          <button onClick={() => handleAction("overbet")} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow">
-            Overbet
-          </button>
-          <button onClick={() => handleAction("all_in")} className="bg-red-800 hover:bg-red-900 text-white font-bold py-2 px-4 rounded-lg shadow">
-            All In (Stack: ${playerStack})
-          </button>
+        <div className="w-full max-w-md">
+          {phase === "showdown" ? (
+            <button
+              onClick={handleNextHand}
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg text-lg animate-bounce"
+            >
+              Start Next Hand 🚀
+            </button>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <button onClick={() => handleAction("fold")} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow">
+                Fold
+              </button>
+              <button onClick={() => handleAction("call")} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg shadow">
+                Call ($50)
+              </button>
+              <button onClick={() => handleAction("raise")} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow">
+                Raise ($150)
+              </button>
+              <button onClick={() => handleAction("overbet")} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow">
+                Overbet
+              </button>
+              <button onClick={() => handleAction("all_in")} className="bg-red-800 hover:bg-red-900 text-white font-bold py-2 px-4 rounded-lg shadow">
+                All In (Stack: ${playerStack})
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

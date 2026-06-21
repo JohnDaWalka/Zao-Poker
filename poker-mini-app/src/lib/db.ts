@@ -11,11 +11,18 @@ export const db = createClient({
 });
 
 export async function initDb() {
+  // Drop tables to force clean schema update
+  await db.execute("DROP TABLE IF EXISTS game_state");
+  await db.execute("DROP TABLE IF EXISTS players");
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS game_state (
       id TEXT PRIMARY KEY,
       pot_size INTEGER DEFAULT 0,
       current_turn_fid INTEGER,
+      board TEXT DEFAULT '',
+      deck TEXT DEFAULT '',
+      phase TEXT DEFAULT 'preflop',
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -24,14 +31,14 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS players (
       fid INTEGER PRIMARY KEY,
       stack_size INTEGER DEFAULT 5000,
-      hand TEXT,
+      hand TEXT DEFAULT '',
       joined_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
   
   // Ensure we have a default game state row
   await db.execute(`
-    INSERT OR IGNORE INTO game_state (id, pot_size, current_turn_fid)
-    VALUES ('main_table', 0, NULL)
+    INSERT OR IGNORE INTO game_state (id, pot_size, current_turn_fid, board, deck, phase)
+    VALUES ('main_table', 0, NULL, '', '', 'preflop')
   `);
 }
