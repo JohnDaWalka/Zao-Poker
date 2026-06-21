@@ -11,8 +11,8 @@ processor = AIProcessor()
 
 # Auto-detect default provider from environment variables
 default_provider = os.getenv("DEFAULT_PROVIDER")
-if not default_provider and os.getenv("GEMINI_API_KEY"):
-    default_provider = "gemini"
+if not default_provider and os.getenv("ASI1_API_KEY"):
+    default_provider = "asi1"
 elif not default_provider and os.getenv("OPENAI_API_KEY"):
     default_provider = "openai"
 elif not default_provider and os.getenv("GROK_API_KEY"):

@@ -33,11 +33,11 @@
       "token_limit": 2048,
       "api_key_env": "GROK_API_KEY"
     },
-    "gemini": {
-      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-      "model": "gemini-1.5-flash",
+    "asi1": {
+      "endpoint": "https://api.asi1.ai/v1/chat/completions",
+      "model": "asi1",
       "token_limit": 2048,
-      "api_key_env": "GEMINI_API_KEY"
+      "api_key_env": "ASI1_API_KEY"
     }
   },
   "routing_rules": {

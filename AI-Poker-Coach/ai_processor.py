@@ -310,7 +310,7 @@ class AIProcessor:
         return hashlib.sha256(raw).hexdigest()[:16]
 
     def set_default_provider(self, provider: str) -> None:
-        allowed = {"local", "openai", "grok", "gemini"}
+        allowed = {"local", "openai", "grok", "asi1"}
         if provider not in allowed:
             raise ValueError(f"Unsupported provider '{provider}'. Expected one of: {sorted(allowed)}")
         self.llm.default_provider = provider
