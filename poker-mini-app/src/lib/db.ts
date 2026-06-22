@@ -72,6 +72,7 @@ async function initializeDb() {
       hand TEXT DEFAULT '',
       current_bet INTEGER DEFAULT 0,
       status TEXT DEFAULT 'waiting', -- 'waiting', 'playing', 'folded', 'sitting_out'
+      has_acted INTEGER DEFAULT 0,
       joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -91,6 +92,7 @@ async function initializeDb() {
     seat_index: "INTEGER",
     status: "TEXT DEFAULT 'waiting'",
     last_seen: "DATETIME",
+    has_acted: "INTEGER DEFAULT 0",
   });
 
   // Pre-populate default tournament rooms with start times

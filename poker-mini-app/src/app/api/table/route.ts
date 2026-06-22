@@ -182,7 +182,7 @@ async function dealNewHand(tableId: string, fids: number[]) {
     potSize += blindAmount;
 
     await db.execute({
-      sql: "UPDATE players SET hand = ?, current_bet = ?, stack_size = stack_size - ?, status = 'playing' WHERE fid = ? AND table_id = ?",
+      sql: "UPDATE players SET hand = ?, current_bet = ?, stack_size = stack_size - ?, status = 'playing', has_acted = 0 WHERE fid = ? AND table_id = ?",
       args: [hand, blindAmount, blindAmount, fid, tableId]
     });
   }
@@ -205,45 +205,48 @@ async function advanceGame(tableId: string, currentState: any) {
   const deck = deckStr ? deckStr.split(",") : [];
   const board = boardStr ? boardStr.split(",") : [];
 
-  // Reset betting for the next street
+  // Reset betting and has_acted for the next street
   await db.execute({
-    sql: "UPDATE players SET current_bet = 0 WHERE table_id = ?",
+    sql: "UPDATE players SET current_bet = 0, has_acted = 0 WHERE table_id = ?",
     args: [tableId]
   });
 
+  let nextPhase = phase;
   if (phase === "preflop") {
     // Deal Flop (3 cards)
-    const c1 = deck.pop();
-    const c2 = deck.pop();
-    const c3 = deck.pop();
+    const c1 = deck.pop(); const c2 = deck.pop(); const c3 = deck.pop();
     if (c1 && c2 && c3) board.push(c1, c2, c3);
-    await db.execute({
-      sql: "UPDATE tables SET board = ?, deck = ?, phase = 'flop', current_bet = 0 WHERE id = ?",
-      args: [board.join(","), deck.join(","), tableId]
-    });
+    nextPhase = 'flop';
   } else if (phase === "flop") {
     // Deal Turn (1 card)
-    const c = deck.pop();
-    if (c) board.push(c);
-    await db.execute({
-      sql: "UPDATE tables SET board = ?, deck = ?, phase = 'turn', current_bet = 0 WHERE id = ?",
-      args: [board.join(","), deck.join(","), tableId]
-    });
+    const c = deck.pop(); if (c) board.push(c);
+    nextPhase = 'turn';
   } else if (phase === "turn") {
     // Deal River (1 card)
-    const c = deck.pop();
-    if (c) board.push(c);
-    await db.execute({
-      sql: "UPDATE tables SET board = ?, deck = ?, phase = 'river', current_bet = 0 WHERE id = ?",
-      args: [board.join(","), deck.join(","), tableId]
-    });
+    const c = deck.pop(); if (c) board.push(c);
+    nextPhase = 'river';
   } else if (phase === "river") {
-    // Showdown phase
-    await db.execute({
-      sql: "UPDATE tables SET phase = 'showdown', current_bet = 0 WHERE id = ?",
+    nextPhase = 'showdown';
+  }
+
+  // Determine next player to act post-flop
+  let newCurrentTurnFid = currentState.current_turn_fid;
+  if (nextPhase !== "showdown") {
+    const { rows: activePlayers } = await db.execute({
+      sql: "SELECT fid FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
       args: [tableId]
     });
+    if (activePlayers.length > 0) {
+       // Post-flop, the player to the left of the button acts first.
+       // In Heads-up (or generally), seat_index 1 acts first.
+       newCurrentTurnFid = activePlayers.length > 1 ? activePlayers[1].fid : activePlayers[0].fid;
+    }
   }
+
+  await db.execute({
+    sql: "UPDATE tables SET board = ?, deck = ?, phase = ?, current_bet = 0, current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+    args: [board.join(","), deck.join(","), nextPhase, newCurrentTurnFid, tableId]
+  });
 }
 
 export async function GET(request: Request) {
@@ -578,21 +581,21 @@ export async function POST(request: Request) {
         // Update status to folded instead of deleting to keep them at the table
         await db.execute({ sql: "UPDATE players SET status = 'folded' WHERE fid = ? AND table_id = ?", args: [fid, table_id] });
         
-        const { rows: remaining } = await db.execute({ sql: "SELECT fid, current_bet FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
+        const { rows: remaining } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
         if (remaining.length === 1) {
           // Last player remaining wins pot
           await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [currentGameState.pot_size, remaining[0].fid, table_id] });
           await db.execute({ sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?", args: [table_id] });
         } else {
-          let newLastAggressor = currentGameState.last_aggressor_fid;
-          if (newLastAggressor === fid) {
-             newLastAggressor = nextPlayerFid;
-          }
-          if (nextPlayerFid === newLastAggressor) {
+          const streetOver = remaining.every((p: any) => p.has_acted === 1 && p.current_bet === currentGameState.current_bet);
+          if (streetOver) {
              const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [table_id]});
              await advanceGame(table_id, freshState[0]);
           } else {
-             await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, last_aggressor_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [nextPlayerFid, newLastAggressor, table_id] });
+             await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [nextPlayerFid, table_id] });
+             // We'd trigger AI here, but AI is never human folding, so we just let it be. Wait, if human folds and next is AI? 
+             // We don't trigger AI here in the original code either, it expects the client to poll? No, original code didn't trigger AI on fold.
+             // Wait, if human folds, the hand either ends (remaining=1) or it passes to the next. In 2-player it always ends.
           }
         }
       }
@@ -646,55 +649,71 @@ export async function POST(request: Request) {
            });
         }
         
-        // Pass the turn
-        let currentIndex = playerRows.findIndex((r: any) => r.fid === fid);
-        let nextPlayerIndex = (currentIndex + 1) % playerRows.length;
-        let nextPlayerFid = playerRows[nextPlayerIndex].fid;
-        let newLastAggressor = currentGameState.last_aggressor_fid;
+        // Action is valid, set has_acted = 1
+        await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = ? AND table_id = ?", args: [fid, table_id] });
 
-        if (action === "bet" || action === "raise" || action === "all_in") {
-            newLastAggressor = fid;
-        }
+        const { rows: remainingActive } = await db.execute({ sql: "SELECT fid, current_bet, has_acted, hand FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
+        
+        const streetOver = remainingActive.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
 
-        if (nextPlayerFid === newLastAggressor) {
-           // street over
+        if (streetOver) {
            const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [table_id] });
            await advanceGame(table_id, freshState[0]);
         } else {
-           await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, last_aggressor_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [nextPlayerFid, newLastAggressor, table_id] });
-           
-            // Trigger AI if next player is PokerCoachJohnny
-            if (nextPlayerFid === 1) {
-               const aiPlayer = playerRows.find((p: any) => p.fid === 1);
-               if (!aiPlayer) {
-                 throw new Error("Practice opponent is unavailable");
-               }
-               const aiToCall = newTableBet - Number(aiPlayer.current_bet || 0);
-               const aiDecision = evaluateAIAction(
-                 String(aiPlayer.hand || ""),
-                 String(currentGameState.board || ""),
-                 aiToCall,
-               );
+           let currentIndex = remainingActive.findIndex((r: any) => r.fid === fid);
+           let nextPlayerIndex = (currentIndex + 1) % remainingActive.length;
+           let nextPlayerFid = remainingActive[nextPlayerIndex].fid;
+
+           await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [nextPlayerFid, table_id] });
+
+           // Trigger AI if next player is PokerCoachJohnny
+           if (nextPlayerFid === 1) {
+              const aiPlayer = remainingActive.find((p: any) => p.fid === 1);
+              if (!aiPlayer) {
+                throw new Error("Practice opponent is unavailable");
+              }
+              const aiToCall = newTableBet - Number(aiPlayer.current_bet || 0);
+              const aiDecision = evaluateAIAction(
+                String(aiPlayer.hand || ""),
+                String(currentGameState.board || ""),
+                aiToCall,
+              );
+
+              await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = 1 AND table_id = ?", args: [table_id] });
 
               if (aiDecision === "call" || aiToCall === 0) {
                  await db.execute({ sql: "UPDATE tables SET pot_size = pot_size + ? WHERE id = ?", args: [aiToCall, table_id] });
                  await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ? WHERE fid = 1 AND table_id = ?", args: [aiToCall, newTableBet, table_id] });
                  
-                 let aiNextIndex = (nextPlayerIndex + 1) % playerRows.length;
-                 let aiNextFid = playerRows[aiNextIndex].fid;
-                 
-                 if (aiNextFid === newLastAggressor) {
-                    const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [table_id]});
+                 const { rows: activeAfterAI } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
+                 const aiStreetOver = activeAfterAI.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
+
+                 if (aiStreetOver) {
+                    const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [table_id] });
                     await advanceGame(table_id, freshState[0]);
                  } else {
+                    let aiCurrentIndex = activeAfterAI.findIndex((r: any) => r.fid === 1);
+                    let aiNextIndex = (aiCurrentIndex + 1) % activeAfterAI.length;
+                    let aiNextFid = activeAfterAI[aiNextIndex].fid;
                     await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [aiNextFid, table_id] });
                  }
               } else {
-                 await db.execute({ sql: "DELETE FROM players WHERE fid = 1 AND table_id = ?", args: [table_id]});
-                 const { rows: rem } = await db.execute({ sql: "SELECT fid FROM players WHERE table_id = ?", args: [table_id]});
+                 await db.execute({ sql: "UPDATE players SET status = 'folded' WHERE fid = 1 AND table_id = ?", args: [table_id]});
+                 const { rows: rem } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id]});
                  if (rem.length === 1) {
-                    await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [newPotSize + aiToCall, rem[0].fid, table_id]}); // wait, aiToCall isn't in pot.
+                    await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [newPotSize, rem[0].fid, table_id]});
                     await db.execute({ sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?", args: [table_id] });
+                 } else {
+                    const aiStreetOver = rem.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
+                    if (aiStreetOver) {
+                       const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [table_id] });
+                       await advanceGame(table_id, freshState[0]);
+                    } else {
+                       let oldAiIndex = remainingActive.findIndex((r: any) => r.fid === 1);
+                       let aiNextIndex = oldAiIndex % rem.length;
+                       let aiNextFid = rem[aiNextIndex].fid;
+                       await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [aiNextFid, table_id] });
+                    }
                  }
               }
            }
