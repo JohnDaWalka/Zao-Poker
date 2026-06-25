@@ -59,6 +59,14 @@ class EmbeddingEngine:
 class LLMGateway:
     """Gateway capable of local (Ollama) and external (OpenAI/Grok) inference."""
 
+    # Sentinel prefixes used by _infer_local/_infer_external to signal failure,
+    # since both return plain strings rather than raising on expected failure modes.
+    _FAILURE_PREFIXES = (
+        "Local model inference unavailable.",
+        "External provider '",
+        "Missing API key for",
+    )
+
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = config
         self.default_provider = config.get("default_provider", "local")
@@ -66,8 +74,27 @@ class LLMGateway:
     def infer(self, prompt: str, route: str, provider: Optional[str] = None) -> str:
         provider_name = provider or self.default_provider
         if provider_name == "local":
-            return self._infer_local(prompt, route)
-        return self._infer_external(prompt, provider_name)
+            result = self._infer_local(prompt, route)
+        else:
+            result = self._infer_external(prompt, provider_name)
+
+        if provider_name != "asi1" and self._is_failure(result) and self._has_api_key("asi1"):
+            fallback = self._infer_external(prompt, "asi1")
+            if not self._is_failure(fallback):
+                return fallback
+        return result
+
+    @classmethod
+    def _is_failure(cls, result: str) -> bool:
+        return result.startswith(cls._FAILURE_PREFIXES)
+
+    def _has_api_key(self, provider: str) -> bool:
+        api_key_env = self.config.get("external", {}).get(provider, {}).get("api_key_env", "")
+        if not api_key_env:
+            return False
+        from os import environ
+
+        return bool(environ.get(api_key_env, ""))
 
     def _infer_local(self, prompt: str, route: str) -> str:
         local_cfg = self.config.get("local", {})
