@@ -78,6 +78,45 @@ async function initializeDb() {
     )
   `);
 
+  // One row per player per resolved hand (fold-win or showdown), feeding
+  // Hand Analysis / Analytics. Hands are immutable once recorded.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS hand_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_id TEXT,
+      fid INTEGER,
+      username TEXT,
+      hole_cards TEXT,
+      board TEXT,
+      result TEXT, -- 'win', 'loss', 'split'
+      net_amount INTEGER DEFAULT 0,
+      pot_size INTEGER DEFAULT 0,
+      phase_reached TEXT, -- 'preflop', 'flop', 'turn', 'river', 'showdown'
+      resolution TEXT, -- 'fold', 'showdown'
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_hand_history_fid_created ON hand_history(fid, created_at)",
+  );
+
+  // Running per-player aggregates for Leaderboards / Dashboard, updated
+  // alongside each hand_history insert so leaderboard reads stay O(1).
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS player_stats (
+      fid INTEGER PRIMARY KEY,
+      username TEXT,
+      pfp_url TEXT,
+      hands_played INTEGER DEFAULT 0,
+      hands_won INTEGER DEFAULT 0,
+      net_winnings INTEGER DEFAULT 0,
+      biggest_pot_won INTEGER DEFAULT 0,
+      current_streak INTEGER DEFAULT 0,
+      best_streak INTEGER DEFAULT 0,
+      last_played_at DATETIME
+    )
+  `);
+
   // Existing Turso databases predate the multiplayer columns. Migrate them
   // in place so a serverless cold start never deletes active tables or seats.
   await addMissingColumns("tables", {
@@ -93,6 +132,10 @@ async function initializeDb() {
     status: "TEXT DEFAULT 'waiting'",
     last_seen: "DATETIME",
     has_acted: "INTEGER DEFAULT 0",
+    // Total chips put into the pot this hand (antes + blinds + every
+    // bet/call/raise/all-in), reset at the start of each new hand. Used to
+    // compute each player's net win/loss for hand_history / player_stats.
+    total_invested: "INTEGER DEFAULT 0",
   });
 
   // Pre-populate default tournament rooms with start times

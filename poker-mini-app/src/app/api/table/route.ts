@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, initDb } from "~/lib/db";
+import { resolveFoldWin, resolveShowdown } from "~/lib/hand-history";
 
 let initialized = false;
 
@@ -142,6 +143,13 @@ async function dealNewHand(tableId: string, fids: number[]) {
   
   let potSize = 0;
 
+  // New hand: reset each player's running "chips invested this hand" so
+  // hand_history/player_stats can compute accurate net win/loss later.
+  await db.execute({
+    sql: "UPDATE players SET total_invested = 0 WHERE table_id = ?",
+    args: [tableId]
+  });
+
   // Deduct ante from all players
   if (blinds.ante > 0) {
     for (const fid of fids) {
@@ -152,11 +160,11 @@ async function dealNewHand(tableId: string, fids: number[]) {
       });
       const stack = Number(pRows[0]?.stack_size || 0);
       const actualAnte = Math.min(stack, blinds.ante);
-      
+
       if (actualAnte > 0) {
         await db.execute({
-          sql: "UPDATE players SET stack_size = stack_size - ? WHERE fid = ? AND table_id = ?",
-          args: [actualAnte, fid, tableId]
+          sql: "UPDATE players SET stack_size = stack_size - ?, total_invested = total_invested + ? WHERE fid = ? AND table_id = ?",
+          args: [actualAnte, actualAnte, fid, tableId]
         });
         potSize += actualAnte;
       }
@@ -182,8 +190,8 @@ async function dealNewHand(tableId: string, fids: number[]) {
     potSize += blindAmount;
 
     await db.execute({
-      sql: "UPDATE players SET hand = ?, current_bet = ?, stack_size = stack_size - ?, status = 'playing', has_acted = 0 WHERE fid = ? AND table_id = ?",
-      args: [hand, blindAmount, blindAmount, fid, tableId]
+      sql: "UPDATE players SET hand = ?, current_bet = ?, stack_size = stack_size - ?, total_invested = total_invested + ?, status = 'playing', has_acted = 0 WHERE fid = ? AND table_id = ?",
+      args: [hand, blindAmount, blindAmount, blindAmount, fid, tableId]
     });
   }
 
@@ -247,6 +255,13 @@ async function advanceGame(tableId: string, currentState: any) {
     sql: "UPDATE tables SET board = ?, deck = ?, phase = ?, current_bet = 0, current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
     args: [board.join(","), deck.join(","), nextPhase, newCurrentTurnFid, tableId]
   });
+
+  // Showdowns previously just set phase='showdown' without ever comparing
+  // hands or crediting the pot to a winner — fix that here so the pot
+  // always resolves to someone's stack, and log the result for stats.
+  if (nextPhase === "showdown") {
+    await resolveShowdown(tableId, Number(currentState.pot_size || 0), board.join(","));
+  }
 }
 
 export async function GET(request: Request) {
@@ -342,6 +357,7 @@ export async function GET(request: Request) {
                 if (remaining.length === 1) {
                   await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [tableState.pot_size, remaining[0].fid, tableId] });
                   await db.execute({ sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?", args: [tableId] });
+                  await resolveFoldWin(tableId, Number(remaining[0].fid), Number(tableState.pot_size || 0), String(tableState.board || ""), String(tableState.phase || "preflop"));
                 } else {
                   let newLastAggressor = tableState.last_aggressor_fid;
                   if (newLastAggressor === fidToFold) newLastAggressor = nextPlayerFid;
@@ -560,6 +576,13 @@ export async function POST(request: Request) {
             sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0, current_turn_fid = NULL WHERE id = ?",
             args: [table_id],
           });
+          await resolveFoldWin(
+            table_id,
+            Number(activePlayers[0].fid),
+            Number(requestedTable.pot_size || 0),
+            String(requestedTable.board || ""),
+            String(requestedTable.phase || "preflop"),
+          );
         }
       }
     } else if (action === "deal") {
@@ -569,7 +592,7 @@ export async function POST(request: Request) {
       });
       await dealNewHand(table_id, players.map((p: any) => p.fid));
     } else if (action === "fold") {
-      const { rows: stateRows } = await db.execute({ sql: "SELECT current_turn_fid, last_aggressor_fid, pot_size FROM tables WHERE id = ?", args: [table_id] });
+      const { rows: stateRows } = await db.execute({ sql: "SELECT current_turn_fid, last_aggressor_fid, pot_size, board, phase FROM tables WHERE id = ?", args: [table_id] });
       const currentGameState = stateRows[0];
       
       if (currentGameState && currentGameState.current_turn_fid === fid) {
@@ -586,6 +609,13 @@ export async function POST(request: Request) {
           // Last player remaining wins pot
           await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [currentGameState.pot_size, remaining[0].fid, table_id] });
           await db.execute({ sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?", args: [table_id] });
+          await resolveFoldWin(
+            table_id,
+            Number(remaining[0].fid),
+            Number(currentGameState.pot_size || 0),
+            String(currentGameState.board || ""),
+            String(currentGameState.phase || "preflop"),
+          );
         } else {
           const streetOver = remaining.every((p: any) => p.has_acted === 1 && p.current_bet === currentGameState.current_bet);
           if (streetOver) {
@@ -639,8 +669,8 @@ export async function POST(request: Request) {
            newPotSize += betDiff;
 
            await db.execute({
-             sql: "UPDATE players SET stack_size = ?, current_bet = ? WHERE fid = ? AND table_id = ?",
-             args: [newPlayerStack, newPlayerBet, fid, table_id]
+             sql: "UPDATE players SET stack_size = ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = ? AND table_id = ?",
+             args: [newPlayerStack, newPlayerBet, betDiff, fid, table_id]
            });
            
            await db.execute({
@@ -683,7 +713,7 @@ export async function POST(request: Request) {
 
               if (aiDecision === "call" || aiToCall === 0) {
                  await db.execute({ sql: "UPDATE tables SET pot_size = pot_size + ? WHERE id = ?", args: [aiToCall, table_id] });
-                 await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ? WHERE fid = 1 AND table_id = ?", args: [aiToCall, newTableBet, table_id] });
+                 await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = 1 AND table_id = ?", args: [aiToCall, newTableBet, aiToCall, table_id] });
                  
                  const { rows: activeAfterAI } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
                  const aiStreetOver = activeAfterAI.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
@@ -703,6 +733,13 @@ export async function POST(request: Request) {
                  if (rem.length === 1) {
                     await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [newPotSize, rem[0].fid, table_id]});
                     await db.execute({ sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?", args: [table_id] });
+                    await resolveFoldWin(
+                      table_id,
+                      Number(rem[0].fid),
+                      newPotSize,
+                      String(currentGameState.board || ""),
+                      String(currentGameState.phase || "preflop"),
+                    );
                  } else {
                     const aiStreetOver = rem.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
                     if (aiStreetOver) {

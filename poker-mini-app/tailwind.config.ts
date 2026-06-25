@@ -22,15 +22,23 @@ export default {
   theme: {
   	extend: {
   		colors: {
-  			// Main theme color - change this to update the entire app's color scheme
-  			primary: "#8b5cf6", // Main brand color
-  			"primary-light": "#a78bfa", // For hover states
-  			"primary-dark": "#7c3aed", // For active states
-  			
+  			// LeakSnipe brand: chemist-neon cyan over a near-black glass surface.
+  			primary: "#22d3ee", // Main brand color (neon cyan)
+  			"primary-light": "#67e8f9", // For hover states
+  			"primary-dark": "#0891b2", // For active states
+
   			// Secondary colors for backgrounds and text
   			secondary: "#f8fafc", // Light backgrounds
   			"secondary-dark": "#334155", // Dark backgrounds
-  			
+
+  			// Chemist/poker accent set
+  			"neon-green": "#39ff14",
+  			"neon-gold": "#eab308",
+
+  			// Dark glass surfaces
+  			surface: "#0a0f16",
+  			"surface-light": "#10182333",
+
   			// Legacy CSS variables for backward compatibility
   			background: 'var(--background)',
   			foreground: 'var(--foreground)'
@@ -53,6 +61,10 @@ export default {
   			'lg': '32rem',
   			'xl': '36rem',
   			'2xl': '42rem',
+  		},
+  		boxShadow: {
+  			glow: '0 0 18px rgba(34, 211, 238, 0.45)',
+  			'glow-gold': '0 0 18px rgba(234, 179, 8, 0.45)',
   		}
   	}
   },
