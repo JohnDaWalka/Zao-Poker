@@ -1,18 +1,27 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useMiniApp } from "@neynar/react";
 import { Header } from "~/components/ui/Header";
 import { Footer } from "~/components/ui/Footer";
-import { HomeTab, ActionsTab, ContextTab, WalletTab } from "~/components/ui/tabs";
+import { HomeTab, DashboardTab, HandAnalysisTab, LeaderboardsTab, AnalyticsTab, WalletTab } from "~/components/ui/tabs";
 import { USE_WALLET } from "~/lib/constants";
 import { useNeynarUser } from "../hooks/useNeynarUser";
+import { useRuntimeHost } from "~/hooks/useRuntimeHost";
+
+/** Outside a Farcaster client, the mini app SDK has nothing to acknowledge
+ * readiness with and isSDKLoaded can stay false indefinitely. Past this
+ * timeout, render the app anyway so Safari/Chrome/desktop users aren't stuck
+ * on a permanent loading screen. */
+const SDK_LOAD_FALLBACK_MS = 2500;
 
 // --- Types ---
 export enum Tab {
   Home = "home",
-  Actions = "actions",
-  Context = "context",
+  Dashboard = "dashboard",
+  HandAnalysis = "hand-analysis",
+  Leaderboards = "leaderboards",
+  Analytics = "analytics",
   Wallet = "wallet",
 }
 
@@ -35,7 +44,7 @@ export interface AppProps {
  * experience with multiple tabs for different functionality areas.
  * 
  * Features:
- * - Tab-based navigation (Home, Actions, Context, Wallet)
+ * - Tab-based navigation (Home, Dashboard, Hand Analysis, Leaderboards, Analytics, Wallet)
  * - Farcaster mini app integration
  * - Wallet connection management
  * - Error handling and display
@@ -50,7 +59,7 @@ export interface AppProps {
  * ```
  */
 export default function App(
-  { title }: AppProps = { title: "Neynar Starter Kit" }
+  { title }: AppProps = { title: "LeakSnipe Poker" }
 ) {
   // --- Hooks ---
   const {
@@ -64,22 +73,34 @@ export default function App(
   // --- Neynar user hook ---
   const { user: neynarUser } = useNeynarUser(context || undefined);
 
+  // --- Universal fallback for non-Farcaster hosts ---
+  const runtimeHost = useRuntimeHost();
+  const [sdkLoadTimedOut, setSdkLoadTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (isSDKLoaded || runtimeHost === "farcaster") return;
+    const timer = setTimeout(() => setSdkLoadTimedOut(true), SDK_LOAD_FALLBACK_MS);
+    return () => clearTimeout(timer);
+  }, [isSDKLoaded, runtimeHost]);
+
+  const appIsReady = isSDKLoaded || sdkLoadTimedOut;
+
   // --- Effects ---
   /**
    * Sets the initial tab to "home" when the SDK is loaded.
-   * 
+   *
    * This effect ensures that users start on the home tab when they first
    * load the mini app. It only runs when the SDK is fully loaded to
    * prevent errors during initialization.
    */
   useEffect(() => {
-    if (isSDKLoaded) {
+    if (appIsReady) {
       setInitialTab(Tab.Home);
     }
-  }, [isSDKLoaded, setInitialTab]);
+  }, [appIsReady, setInitialTab]);
 
   // --- Early Returns ---
-  if (!isSDKLoaded) {
+  if (!appIsReady) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
@@ -110,8 +131,10 @@ export default function App(
 
         {/* Tab content rendering */}
         {currentTab === Tab.Home && <HomeTab />}
-        {currentTab === Tab.Actions && <ActionsTab />}
-        {currentTab === Tab.Context && <ContextTab />}
+        {currentTab === Tab.Dashboard && <DashboardTab />}
+        {currentTab === Tab.HandAnalysis && <HandAnalysisTab />}
+        {currentTab === Tab.Leaderboards && <LeaderboardsTab />}
+        {currentTab === Tab.Analytics && <AnalyticsTab />}
         {currentTab === Tab.Wallet && <WalletTab />}
 
         {/* Footer with navigation */}

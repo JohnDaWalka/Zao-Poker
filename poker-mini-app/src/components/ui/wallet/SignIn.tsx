@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react';
 import { SignIn as SignInCore } from '@farcaster/miniapp-sdk';
 import { useQuickAuth } from '~/hooks/useQuickAuth';
+import { useRuntimeHost } from '~/hooks/useRuntimeHost';
 import { Button } from '../Button';
 
 /**
@@ -38,6 +39,8 @@ export function SignIn() {
 
   // --- Hooks ---
   const { authenticatedUser, status, signIn, signOut } = useQuickAuth();
+  const runtimeHost = useRuntimeHost();
+  const isFarcasterHost = runtimeHost === "farcaster";
 
   // --- Handlers ---
   /**
@@ -91,8 +94,13 @@ export function SignIn() {
   return (
     <>
       {/* Authentication Buttons */}
+      {!isFarcasterHost && (
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+          Farcaster sign-in is only available inside a Farcaster client. Use Connect Wallet above instead.
+        </p>
+      )}
       {status !== 'authenticated' && (
-        <Button onClick={handleSignIn} disabled={authState.signingIn}>
+        <Button onClick={handleSignIn} disabled={authState.signingIn || !isFarcasterHost}>
           Sign In with Farcaster
         </Button>
       )}

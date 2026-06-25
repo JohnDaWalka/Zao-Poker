@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useMiniApp } from "@neynar/react";
-import { useNeynarUser } from "~/hooks/useNeynarUser";
+import { useUniversalUser } from "~/hooks/useUniversalUser";
 
 // Helper to convert card string (e.g. "Ah") to display components
 function getCardDisplay(card: string) {
@@ -28,9 +27,11 @@ interface TableData {
 }
 
 export function HomeTab() {
-  const { context } = useMiniApp();
-  const { user: neynarUser } = useNeynarUser(context || undefined);
-  
+  // Falls back Farcaster user -> connected wallet -> guest, so browsers/
+  // wallets outside Farcaster get a stable per-user identity instead of all
+  // colliding on a single shared placeholder fid.
+  const universalUser = useUniversalUser();
+
   // Navigation states
   const [gameState, setGameState] = useState<"lobby" | "table">("lobby");
   const [selectedTableId, setSelectedTableId] = useState<string>("");
@@ -96,7 +97,7 @@ export function HomeTab() {
     if (gameState !== "table" || !selectedTableId) return;
     const fetchTableState = async () => {
       try {
-        const userFid = context?.user?.fid || 9999;
+        const userFid = universalUser.fid;
         const res = await fetch(`/api/table?table_id=${selectedTableId}&fid=${userFid}`);
         const data = await res.json();
         if (data.success && data.gameState) {
@@ -113,7 +114,7 @@ export function HomeTab() {
           setNextLevelInSecs(data.gameState.next_level_in_secs);
           setCurrentTurnFid(data.gameState.current_turn_fid);
 
-          const userFid = context?.user?.fid || 9999;
+          const userFid = universalUser.fid;
           const me = data.players.find((p: any) => p.fid === userFid);
           if (me) {
             setPlayerStack(me.stack_size);
@@ -126,7 +127,7 @@ export function HomeTab() {
     fetchTableState();
     const interval = setInterval(fetchTableState, 1500);
     return () => clearInterval(interval);
-  }, [gameState, selectedTableId, context?.user?.fid]);
+  }, [gameState, selectedTableId, universalUser.fid]);
 
   const sendEvent = async (eventData: any) => {
     try {
@@ -136,7 +137,7 @@ export function HomeTab() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            fid: context?.user?.fid,
+            fid: universalUser.fid,
             ...eventData,
           }),
         }
@@ -151,9 +152,9 @@ export function HomeTab() {
     setJoinError("");
 
     const payload = {
-      fid: context?.user?.fid || 9999,
-      username: neynarUser?.username || `User#${context?.user?.fid || 9999}`,
-      pfp_url: neynarUser?.pfp_url || "",
+      fid: universalUser.fid,
+      username: universalUser.username,
+      pfp_url: universalUser.avatarUrl || "",
       table_id: tableId,
       action: "join"
     };
@@ -195,7 +196,7 @@ export function HomeTab() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        fid: context?.user?.fid || 9999,
+        fid: universalUser.fid,
         table_id: selectedTableId,
         action: "leave"
       })
@@ -210,7 +211,7 @@ export function HomeTab() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        fid: context?.user?.fid || 9999,
+        fid: universalUser.fid,
         table_id: selectedTableId,
         action: "deal"
       })
@@ -223,7 +224,7 @@ export function HomeTab() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        fid: context?.user?.fid || 9999,
+        fid: universalUser.fid,
         table_id: selectedTableId,
         action: "deal"
       })
@@ -257,7 +258,7 @@ export function HomeTab() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        fid: context?.user?.fid || 9999,
+        fid: universalUser.fid,
         table_id: selectedTableId,
         action,
         amount
@@ -279,7 +280,7 @@ export function HomeTab() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fid: context?.user?.fid || 9999,
+          fid: universalUser.fid,
           action: action === "check" ? "check" : (action === "call" ? "call" : "bet"),
           amount: amount,
           pot_size: potSize + amount,
@@ -297,12 +298,12 @@ export function HomeTab() {
   // LOBBY VIEW
   if (gameState === "lobby") {
     return (
-      <div className="flex flex-col min-h-screen bg-gray-950 text-white p-4">
-        <header className="py-6 text-center border-b border-gray-900 mb-6">
-          <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-500">
-            ZAO Poker Tournament Lobby
+      <div className="flex flex-col min-h-screen bg-surface text-white p-4">
+        <header className="py-6 text-center border-b border-primary/15 mb-6">
+          <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-primary-light to-neon-green drop-shadow-[0_0_12px_rgba(34,211,238,0.35)]">
+            LeakSnipe Poker Lobby
           </h1>
-          <p className="text-xs text-gray-500 mt-1">Select a tournament table to join from your Farcaster ID</p>
+          <p className="text-xs text-gray-500 mt-1">Select a table to join — Farcaster, wallet, or guest</p>
         </header>
 
         <div className="flex-1 flex flex-col space-y-4 max-w-md mx-auto w-full">
@@ -317,7 +318,7 @@ export function HomeTab() {
             lobbyTables.map((table) => (
               <div
                 key={table.id}
-                className="bg-gray-900 border border-gray-800 hover:border-gray-700 p-4 rounded-xl flex flex-col justify-between shadow-lg transition-all"
+                className="glass-panel hover:border-primary/40 p-4 flex flex-col justify-between transition-all"
               >
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-bold text-lg text-gray-200">{table.name}</h3>
@@ -384,13 +385,13 @@ export function HomeTab() {
   // WAITING ROOM VIEW
   if (gameState === "table" && tableStatus === "waiting") {
     return (
-      <div className="flex flex-col min-h-screen bg-gray-950 text-white p-4 justify-between">
-        <header className="py-4 text-center border-b border-gray-900">
-          <h2 className="text-xl font-bold text-gray-300">Waiting Room</h2>
-          <p className="text-sm text-yellow-500 font-semibold">{tableName}</p>
+      <div className="flex flex-col min-h-screen bg-surface text-white p-4 justify-between">
+        <header className="py-4 text-center border-b border-primary/15">
+          <h2 className="text-xl font-bold text-primary-light">Waiting Room</h2>
+          <p className="text-sm text-neon-gold font-semibold">{tableName}</p>
         </header>
 
-        <div className="my-auto max-w-md mx-auto w-full p-4 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl">
+        <div className="glass-panel my-auto max-w-md mx-auto w-full p-4">
           <h3 className="text-sm font-semibold tracking-wider text-gray-500 uppercase mb-4 text-center">
             Seated Players ({seatedPlayers.length}/{maxPlayers})
           </h3>
@@ -492,7 +493,7 @@ export function HomeTab() {
 
         {/* Opponents Rendering */}
         <div className="flex w-full justify-around mt-4 shrink-0">
-          {seatedPlayers.filter(p => p.fid !== (context?.user?.fid || 9999)).map((opponent) => (
+          {seatedPlayers.filter(p => p.fid !== (universalUser.fid)).map((opponent) => (
              <div key={opponent.fid} className={`flex flex-col items-center transition-opacity ${opponent.status === 'folded' ? 'opacity-40' : 'opacity-100'}`}>
                <div className="relative">
                  {opponent.pfp_url ? (
@@ -603,11 +604,11 @@ export function HomeTab() {
         {/* Player Hand */}
         <div className="mb-6 flex flex-col items-center">
           <div className="flex items-center justify-center space-x-2 mb-2">
-            {neynarUser?.pfp_url && (
-              <img src={neynarUser.pfp_url} alt="Avatar" className="w-6 h-6 rounded-full" />
+            {universalUser.avatarUrl && (
+              <img src={universalUser.avatarUrl} alt="Avatar" className="w-6 h-6 rounded-full" />
             )}
             <p className="text-sm text-green-200">
-              {neynarUser?.username ? `@${neynarUser.username}` : "Your Hand"}
+              {universalUser.authSource === "farcaster" ? `@${universalUser.username}` : universalUser.displayName}
             </p>
           </div>
           <div className="flex justify-center space-x-2">
@@ -632,7 +633,7 @@ export function HomeTab() {
         </div>
 
         {/* Dynamic No-Limit Hold'em HUD */}
-        <div className="w-full max-w-md bg-gray-900 bg-opacity-95 p-3 rounded-lg border border-gray-800 mb-2">
+        <div className="glass-panel w-full max-w-md p-3 mb-2">
           {phase === "showdown" ? (
             <div className="text-center space-y-3 py-2">
               <p className="text-green-400 font-bold text-lg">
@@ -652,7 +653,7 @@ export function HomeTab() {
                 <span>Active Bet: <span className="text-blue-400 font-bold">${currentBet}</span></span>
               </div>
               
-              {currentTurnFid !== (context?.user?.fid || 9999) ? (
+              {currentTurnFid !== (universalUser.fid) ? (
                 <div className="flex items-center justify-center p-4 bg-gray-800 rounded-lg">
                   <span className="text-gray-400 font-semibold animate-pulse">Waiting for other players...</span>
                 </div>
