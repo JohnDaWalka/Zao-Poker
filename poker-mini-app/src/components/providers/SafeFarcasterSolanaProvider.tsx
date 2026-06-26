@@ -1,3 +1,5 @@
+"use client";
+
 import React, { createContext, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { sdk } from '@farcaster/miniapp-sdk';
@@ -12,19 +14,26 @@ type SafeFarcasterSolanaProviderProps = {
   children: React.ReactNode;
 };
 
+const SOLANA_PROVIDER_CHECK_TIMEOUT_MS = 1500;
+
 const SolanaProviderContext = createContext<{ hasSolanaProvider: boolean }>({ hasSolanaProvider: false });
 
 export function SafeFarcasterSolanaProvider({ endpoint, children }: SafeFarcasterSolanaProviderProps) {
-  const isClient = typeof window !== "undefined";
   const [hasSolanaProvider, setHasSolanaProvider] = useState<boolean>(false);
-  const [checked, setChecked] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!isClient) return;
     let cancelled = false;
+    let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
+
     (async () => {
       try {
-        const provider = await sdk.wallet.getSolanaProvider();
+        const provider = await Promise.race([
+          sdk.wallet.getSolanaProvider(),
+          new Promise<null>((resolve) => {
+            timeoutId = window.setTimeout(() => resolve(null), SOLANA_PROVIDER_CHECK_TIMEOUT_MS);
+          }),
+        ]);
+
         if (!cancelled) {
           setHasSolanaProvider(!!provider);
         }
@@ -33,15 +42,19 @@ export function SafeFarcasterSolanaProvider({ endpoint, children }: SafeFarcaste
           setHasSolanaProvider(false);
         }
       } finally {
-        if (!cancelled) {
-          setChecked(true);
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
         }
       }
     })();
+
     return () => {
       cancelled = true;
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
     };
-  }, [isClient]);
+  }, []);
 
   useEffect(() => {
     let errorShown = false;
@@ -63,10 +76,6 @@ export function SafeFarcasterSolanaProvider({ endpoint, children }: SafeFarcaste
       console.error = origError;
     };
   }, []);
-
-  if (!isClient || !checked) {
-    return null;
-  }
 
   return (
     <SolanaProviderContext.Provider value={{ hasSolanaProvider }}>

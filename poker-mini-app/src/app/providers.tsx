@@ -6,7 +6,7 @@ import { SafeFarcasterSolanaProvider } from '~/components/providers/SafeFarcaste
 import { RegisterAdapters } from '~/components/providers/RegisterAdapters';
 import { PrivyProviders } from '~/components/providers/PrivyProviders';
 import { ZeroDevSmartAccountConnector } from '~/components/providers/ZeroDevSmartAccountConnector';
-import { ANALYTICS_ENABLED, RETURN_URL } from '~/lib/constants';
+import { ANALYTICS_ENABLED, RETURN_URL, USE_WALLET } from '~/lib/constants';
 import { getPublicEnv } from '~/lib/env';
 
 const WagmiProvider = dynamic(
@@ -26,6 +26,13 @@ export function Providers({
 
   const { privyAppId, zeroDevBundlerRpc } = getPublicEnv();
   const smartAccountEnabled = Boolean(privyAppId && zeroDevBundlerRpc);
+  const appChildren = (
+    <>
+      <RegisterAdapters />
+      {smartAccountEnabled && <ZeroDevSmartAccountConnector />}
+      {children}
+    </>
+  );
 
   return (
     <PrivyProviders>
@@ -35,11 +42,13 @@ export function Providers({
           backButtonEnabled={true}
           returnUrl={RETURN_URL}
         >
-          <SafeFarcasterSolanaProvider endpoint={solanaEndpoint}>
-            <RegisterAdapters />
-            {smartAccountEnabled && <ZeroDevSmartAccountConnector />}
-            {children}
-          </SafeFarcasterSolanaProvider>
+          {USE_WALLET ? (
+            <SafeFarcasterSolanaProvider endpoint={solanaEndpoint}>
+              {appChildren}
+            </SafeFarcasterSolanaProvider>
+          ) : (
+            appChildren
+          )}
         </MiniAppProvider>
       </WagmiProvider>
     </PrivyProviders>
