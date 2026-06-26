@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, initDb } from "~/lib/db";
+import { analyzeHoldemSpot } from "~/lib/game-theory";
 import { resolveFoldWin, resolveShowdown } from "~/lib/hand-history";
 
 let initialized = false;
@@ -66,67 +67,48 @@ function getCurrentBlinds(startTimeStr: string | null) {
   return { levelIndex, blinds: BLIND_LEVELS[levelIndex], nextLevelInSecs };
 }
 
-// Convert card rank character to value
-function rankToValue(rank: string): number {
-  if (rank === "T") return 10;
-  if (rank === "J") return 11;
-  if (rank === "Q") return 12;
-  if (rank === "K") return 13;
-  if (rank === "A") return 14;
-  return parseInt(rank) || 0;
-}
-
-// Heuristic game-tree evaluator to simulate AI opponent's choices (call/fold)
-function evaluateAIAction(aiHandStr: string, boardStr: string, toCall: number): "call" | "fold" {
-  if (!aiHandStr) return "fold";
-  const aiHand = aiHandStr.split(",");
-  if (aiHand.length < 2) return "fold";
-
-  const board = boardStr ? boardStr.split(",") : [];
-  const ranks = aiHand.map(c => c[0]);
-  const suits = aiHand.map(c => c[1]);
-  
-  const v1 = rankToValue(ranks[0]);
-  const v2 = rankToValue(ranks[1]);
-  const isPair = v1 === v2;
-  const isSuited = suits[0] === suits[1];
-  const gap = Math.abs(v1 - v2);
-  const isConnector = gap === 1 || gap === 2;
-
-  // Preflop
-  if (board.length === 0) {
-    if (isPair) return "call";
-    if (v1 >= 10 && v2 >= 10) return "call";
-    if (isSuited && (v1 >= 9 || v2 >= 9)) return "call";
-    if (isConnector && (v1 >= 8 || v2 >= 8)) return "call";
-    if (toCall > 150) return "fold";
-    if (toCall <= 50) return "call";
-    return "fold";
+function evaluateAIAction(
+  aiHandStr: string,
+  boardStr: string,
+  toCall: number,
+  potSize: number,
+  stackSize: number,
+): { action: "fold" | "call" | "raise" | "check" | "bet"; targetBet: number | null } {
+  if (!aiHandStr) {
+    return { action: "fold", targetBet: null };
   }
 
-  // Postflop
-  const allCards = [...aiHand, ...board];
-  const allRanks = allCards.map(c => c[0]);
-  const allSuits = allCards.map(c => c[1]);
-  
-  const rankCounts: Record<string, number> = {};
-  for (const r of allRanks) {
-    rankCounts[r] = (rankCounts[r] || 0) + 1;
+  const aiHand = aiHandStr.split(",").filter(Boolean);
+  if (aiHand.length < 2) {
+    return { action: "fold", targetBet: null };
   }
-  const maxDuplicates = Math.max(...Object.values(rankCounts));
-  const hasPair = maxDuplicates >= 2;
-  
-  const suitCounts: Record<string, number> = {};
-  for (const s of allSuits) {
-    suitCounts[s] = (suitCounts[s] || 0) + 1;
-  }
-  const maxSuits = Math.max(...Object.values(suitCounts));
-  const hasFlushDraw = maxSuits >= 4;
 
-  if (hasPair || hasFlushDraw) return "call";
-  if (toCall === 0) return "call";
-  if (Math.random() < 0.1) return "call";
-  return "fold";
+  const boardCards = boardStr ? boardStr.split(",").filter(Boolean) : [];
+  const analysis = analyzeHoldemSpot({
+    holeCards: aiHand,
+    boardCards,
+    potSize,
+    toCall,
+    stackSize,
+    opponentCount: 1,
+    position: "oop",
+    history: [],
+    iterations: 220,
+    trials: 320,
+  });
+
+  if (analysis.recommendedAction === "raise" || analysis.recommendedAction === "bet") {
+    const targetBet = Math.min(
+      stackSize,
+      Math.max(toCall > 0 ? toCall * 2.5 : Math.round(Math.max(potSize, 20) * 0.65), 20),
+    );
+    return { action: analysis.recommendedAction, targetBet };
+  }
+
+  return {
+    action: analysis.recommendedAction,
+    targetBet: null,
+  };
 }
 
 // Deal a new hand (Preflop)
@@ -923,19 +905,47 @@ export async function POST(request: Request) {
               if (!aiPlayer) {
                 throw new Error("Practice opponent is unavailable");
               }
-              const aiToCall = newTableBet - Number(aiPlayer.current_bet || 0);
+              const aiCurrentBet = Number(aiPlayer.current_bet || 0);
+              const aiToCall = newTableBet - aiCurrentBet;
               const aiDecision = evaluateAIAction(
                 String(aiPlayer.hand || ""),
                 String(currentGameState.board || ""),
                 aiToCall,
+                newPotSize,
+                Number(aiPlayer.stack_size || 0),
               );
 
               await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = 1 AND table_id = ?", args: [table_id] });
 
-              if (aiDecision === "call" || aiToCall === 0) {
-                 await db.execute({ sql: "UPDATE tables SET pot_size = pot_size + ? WHERE id = ?", args: [aiToCall, table_id] });
-                 await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = 1 AND table_id = ?", args: [aiToCall, newTableBet, aiToCall, table_id] });
-                 
+              if (
+                aiDecision.action === "raise" ||
+                aiDecision.action === "bet"
+              ) {
+                 const aiTargetBet = Math.max(
+                  newTableBet,
+                  Math.min(
+                    Number(aiPlayer.stack_size || 0) + aiCurrentBet,
+                    Number(aiDecision.targetBet || newTableBet),
+                  ),
+                 );
+                 const aiBetDiff = Math.max(0, aiTargetBet - aiCurrentBet);
+
+                 if (aiBetDiff > 0) {
+                  await db.execute({ sql: "UPDATE tables SET pot_size = pot_size + ?, current_bet = ? WHERE id = ?", args: [aiBetDiff, aiTargetBet, table_id] });
+                  await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = 1 AND table_id = ?", args: [aiBetDiff, aiTargetBet, aiBetDiff, table_id] });
+                  await db.execute({ sql: "UPDATE players SET has_acted = 0 WHERE table_id = ? AND status = 'playing' AND fid != 1", args: [table_id] });
+                  await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = 1 AND table_id = ?", args: [table_id] });
+
+                  const { rows: activeAfterRaise } = await db.execute({ sql: "SELECT fid FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
+                  let aiCurrentIndex = activeAfterRaise.findIndex((r: any) => r.fid === 1);
+                  let aiNextIndex = (aiCurrentIndex + 1) % activeAfterRaise.length;
+                  let aiNextFid = activeAfterRaise[aiNextIndex].fid;
+                  await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [aiNextFid, table_id] });
+                 }
+              } else if (aiDecision.action === "call" || aiDecision.action === "check" || aiToCall === 0) {
+                 await db.execute({ sql: "UPDATE tables SET pot_size = pot_size + ? WHERE id = ?", args: [Math.max(0, aiToCall), table_id] });
+                 await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = 1 AND table_id = ?", args: [Math.max(0, aiToCall), newTableBet, Math.max(0, aiToCall), table_id] });
+                  
                  const { rows: activeAfterAI } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
                  const aiStreetOver = activeAfterAI.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
 

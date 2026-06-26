@@ -284,11 +284,15 @@ export function HomeTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fid: universalUser.fid,
-          action: action === "check" ? "check" : (action === "call" ? "call" : "bet"),
+          action,
           amount: amount,
           pot_size: potSize + amount,
           stack_size: playerStack - amount,
-          cards: playerCards
+          cards: playerCards,
+          board,
+          to_call: toCall,
+          opponent_count: Math.max(1, seatedPlayers.length - 1),
+          action_history: [],
         })
       });
       const resData = await resAnalyze.json();
