@@ -72,6 +72,7 @@ async function appendActionHistory(
 }
 
 // Blind levels (6-minute intervals). Ante is fixed at 25% of the Big Blind.
+const AUTOPLAY_MAX_TURNS = 12;
 const BLIND_LEVELS = [
   { sb: 5, bb: 10, ante: 2.5 },
   { sb: 10, bb: 20, ante: 5 },
@@ -703,7 +704,7 @@ async function playAutomatedTurn(tableId: string) {
   return true;
 }
 
-async function runAutoplayUntilHuman(tableId: string, maxTurns = 12) {
+async function runAutoplayUntilHuman(tableId: string, maxTurns = AUTOPLAY_MAX_TURNS) {
   for (let turn = 0; turn < maxTurns; turn += 1) {
     const acted = await playAutomatedTurn(tableId);
     if (!acted) {
@@ -813,7 +814,7 @@ export async function GET(request: Request) {
             tableId,
             waitingPlayers.map((player) => Number(player.fid)),
           );
-          await runAutoplayUntilHuman(tableId, 12);
+          await runAutoplayUntilHuman(tableId, AUTOPLAY_MAX_TURNS);
           const { rows: updatedRows } = await db.execute({
             sql: "SELECT * FROM tables WHERE id = ?",
             args: [tableId],
@@ -889,7 +890,7 @@ export async function GET(request: Request) {
         }
       }
 
-      await runAutoplayUntilHuman(tableId, 12);
+      await runAutoplayUntilHuman(tableId, AUTOPLAY_MAX_TURNS);
 
       const response = await buildTableResponse(tableId);
       if (!response) {
@@ -1336,7 +1337,7 @@ export async function POST(request: Request) {
     }
 
     await ensureAutoplayBot(effectiveTableId);
-    await runAutoplayUntilHuman(effectiveTableId, 12);
+    await runAutoplayUntilHuman(effectiveTableId, AUTOPLAY_MAX_TURNS);
     const response = await buildTableResponse(effectiveTableId);
     if (!response) {
       return NextResponse.json(

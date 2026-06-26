@@ -208,14 +208,7 @@ def calculate_equity_fast(hand1_combos: List[str], hand2_combos: List[str],
     if total == 0:
         return {'error': 'No valid simulations'}
 
-    skip_rate = 1.0 - (total / trials)
-    if skip_rate > 0.5:
-        return {
-            'error': f'High conflict rate ({skip_rate:.0%}) - ranges overlap heavily',
-            'warning': 'Try ranges with less overlap (e.g., AA vs KK instead of AA vs AA)',
-        }
-    
-    return {
+    result = {
         'hand1_equity': round((h1_wins + ties * 0.5) / total * 100, 2),
         'hand2_equity': round((h2_wins + ties * 0.5) / total * 100, 2),
         'hand1_wins': h1_wins,
@@ -223,6 +216,16 @@ def calculate_equity_fast(hand1_combos: List[str], hand2_combos: List[str],
         'ties': ties,
         'total_trials': total
     }
+
+    skip_rate = 1.0 - (total / trials)
+    if skip_rate > 0.5:
+        result['warning'] = (
+            f'High conflict rate ({skip_rate:.0%}) - ranges overlap heavily. '
+            'Equity values are based on the non-conflicting trials only.'
+        )
+        result['skip_rate'] = round(skip_rate, 4)
+
+    return result
 
 
 def range_vs_range(range1_str: str, range2_str: str, 
