@@ -46,7 +46,10 @@ async function initializeDb() {
     CREATE TABLE IF NOT EXISTS tables (
       id TEXT PRIMARY KEY,
       name TEXT,
+      game_type TEXT DEFAULT 'NLHE',
+      stakes_label TEXT DEFAULT '$0.50 / $1',
       max_players INTEGER DEFAULT 6,
+      buy_in INTEGER DEFAULT 50,
       status TEXT DEFAULT 'waiting', -- 'waiting', 'playing', 'finished'
       pot_size INTEGER DEFAULT 0,
       current_bet INTEGER DEFAULT 0,
@@ -54,6 +57,8 @@ async function initializeDb() {
       deck TEXT DEFAULT '',
       phase TEXT DEFAULT 'preflop',
       start_time DATETIME,
+      created_by_fid INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       current_turn_fid INTEGER,
       last_aggressor_fid INTEGER,
       turn_started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -72,7 +77,9 @@ async function initializeDb() {
       hand TEXT DEFAULT '',
       current_bet INTEGER DEFAULT 0,
       status TEXT DEFAULT 'waiting', -- 'waiting', 'playing', 'folded', 'sitting_out'
+      is_ready INTEGER DEFAULT 0,
       has_acted INTEGER DEFAULT 0,
+      total_invested INTEGER DEFAULT 0,
       joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -120,7 +127,12 @@ async function initializeDb() {
   // Existing Turso databases predate the multiplayer columns. Migrate them
   // in place so a serverless cold start never deletes active tables or seats.
   await addMissingColumns("tables", {
+    game_type: "TEXT DEFAULT 'NLHE'",
+    stakes_label: "TEXT DEFAULT '$0.50 / $1'",
+    buy_in: "INTEGER DEFAULT 50",
     start_time: "DATETIME",
+    created_by_fid: "INTEGER",
+    created_at: "DATETIME",
     current_turn_fid: "INTEGER",
     last_aggressor_fid: "INTEGER",
     turn_started_at: "DATETIME",
@@ -130,6 +142,7 @@ async function initializeDb() {
   await addMissingColumns("players", {
     seat_index: "INTEGER",
     status: "TEXT DEFAULT 'waiting'",
+    is_ready: "INTEGER DEFAULT 0",
     last_seen: "DATETIME",
     has_acted: "INTEGER DEFAULT 0",
     // Total chips put into the pot this hand (antes + blinds + every
@@ -149,11 +162,11 @@ async function initializeDb() {
 
   await db.execute({
     sql: `
-      INSERT OR IGNORE INTO tables (id, name, max_players, status, start_time)
+      INSERT OR IGNORE INTO tables (id, name, game_type, stakes_label, max_players, buy_in, status, start_time)
       VALUES 
-        ('room_1', 'Heads-Up GTO Match', 2, 'waiting', ?),
-        ('room_2', '6-Max Sit & Go Turbo', 6, 'waiting', ?),
-        ('room_3', 'Meta Labs VR Tourney', 6, 'waiting', ?)
+        ('room_1', 'Heads-Up GTO Match', 'NLHE', '$0.10 / $0.25', 2, 25, 'waiting', ?),
+        ('room_2', '6-Max Sit & Go Turbo', 'NLHE', '$1 / $2', 6, 50, 'waiting', ?),
+        ('room_3', 'Meta Labs VR Tourney', 'NLHE', '$2 / $5', 6, 100, 'waiting', ?)
     `,
     args: [time1, time2, time3]
   });
@@ -173,11 +186,36 @@ async function initializeDb() {
     args: [time1, time2, time3],
   });
 
+  await db.execute(`
+    UPDATE tables
+    SET
+      game_type = COALESCE(game_type, 'NLHE'),
+      stakes_label = COALESCE(
+        stakes_label,
+        CASE id
+          WHEN 'room_1' THEN '$0.10 / $0.25'
+          WHEN 'room_2' THEN '$1 / $2'
+          WHEN 'room_3' THEN '$2 / $5'
+          ELSE '$0.50 / $1'
+        END
+      ),
+      buy_in = COALESCE(
+        buy_in,
+        CASE id
+          WHEN 'room_1' THEN 25
+          WHEN 'room_2' THEN 50
+          WHEN 'room_3' THEN 100
+          ELSE 50
+        END
+      ),
+      created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
+  `);
+
   await db.execute(
-    "UPDATE tables SET turn_started_at = COALESCE(turn_started_at, CURRENT_TIMESTAMP), updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)",
+    "UPDATE tables SET turn_started_at = COALESCE(turn_started_at, CURRENT_TIMESTAMP), created_at = COALESCE(created_at, CURRENT_TIMESTAMP), updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)",
   );
   await db.execute(
-    "UPDATE players SET last_seen = COALESCE(last_seen, CURRENT_TIMESTAMP)",
+    "UPDATE players SET is_ready = COALESCE(is_ready, 0), total_invested = COALESCE(total_invested, 0), last_seen = COALESCE(last_seen, CURRENT_TIMESTAMP)",
   );
 }
 

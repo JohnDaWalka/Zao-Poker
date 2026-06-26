@@ -39,8 +39,13 @@ type ServerMessage =
 type CurrentApiLobbyTable = {
   id: string;
   name: string;
+  game_type?: GameType;
+  stakes_label?: string;
   max_players: number;
+  buy_in?: number;
   status: "waiting" | "playing" | "finished";
+  normalized_status?: TableStatus;
+  created_at?: string | null;
   start_time?: string | null;
 };
 
@@ -51,24 +56,18 @@ type CurrentApiPlayer = {
   stack_size?: number;
   status?: "waiting" | "playing" | "folded" | "sitting_out";
   seat_index?: number;
+  is_ready?: number;
 };
 
 const env = getPublicEnv();
 
-const TABLE_PRESENTATION: Record<
-  string,
-  { game: GameType; stakes: string; buyIn: number }
-> = {
-  room_1: { game: "NLHE", stakes: "$0.10 / $0.25", buyIn: 25 },
-  room_2: { game: "NLHE", stakes: "$1 / $2", buyIn: 50 },
-  room_3: { game: "NLHE", stakes: "$2 / $5", buyIn: 100 },
-};
-
 function mapStatus(
   status: CurrentApiLobbyTable["status"],
   occupiedSeats: number,
-  maxPlayers: number
+  maxPlayers: number,
+  normalizedStatus?: TableStatus
 ): TableStatus {
+  if (normalizedStatus) return normalizedStatus;
   if (status === "playing") return "in_game";
   if (occupiedSeats >= maxPlayers) return "full";
   if (occupiedSeats > 0) return "seated";
@@ -116,25 +115,25 @@ function mapCurrentApiTable(
       seatNumber: seatIndex + 1,
       user: mapPlayerToUniversalUser(player),
       stack: Number(player.stack_size || 0),
-      isReady: player.status === "playing",
+      isReady: Number(player.is_ready || 0) === 1,
     };
   }
-
-  const presentation =
-    TABLE_PRESENTATION[table.id] ??
-    ({ game: "NLHE", stakes: "$0.50 / $1", buyIn: 50 } as const);
 
   const occupiedSeats = players.length;
 
   return {
     id: table.id,
     name: table.name,
-    game: presentation.game,
-    stakes: presentation.stakes,
-    buyIn: presentation.buyIn,
+    game: table.game_type ?? "NLHE",
+    stakes: table.stakes_label ?? "$0.50 / $1",
+    buyIn: Number(table.buy_in || 50),
     maxPlayers,
-    status: mapStatus(table.status, occupiedSeats, maxPlayers),
-    createdAt: table.start_time ? new Date(table.start_time).getTime() : Date.now(),
+    status: mapStatus(table.status, occupiedSeats, maxPlayers, table.normalized_status),
+    createdAt: table.created_at
+      ? new Date(table.created_at).getTime()
+      : table.start_time
+        ? new Date(table.start_time).getTime()
+        : Date.now(),
     startTime: table.start_time ?? null,
     seats: seatDefaults,
   };
@@ -376,33 +375,79 @@ export function useRenderLobby() {
   );
 
   const createTable = useCallback(
-    (payload: {
+    async (payload: {
       name: string;
       game: GameType;
       stakes: string;
       maxPlayers: number;
       buyIn: number;
-    }) => {
+    }, user?: UniversalUser) => {
       if (env.hasRenderLobby) {
         send({ type: "create_table", payload });
         return;
       }
 
-      setError("Custom table creation is available once the Render lobby is configured.");
+      try {
+        const response = await fetch("/api/table", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fid: user?.fid ?? -1,
+            action: "create",
+            ...payload,
+          }),
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Unable to create this table.");
+        }
+
+        await refreshCurrentApiLobby();
+      } catch (caughtError) {
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Unable to create this table."
+        );
+      }
     },
-    [send]
+    [refreshCurrentApiLobby, send]
   );
 
   const toggleReady = useCallback(
-    (tableId: string, user: UniversalUser) => {
+    async (tableId: string, user: UniversalUser) => {
       if (env.hasRenderLobby) {
         send({ type: "toggle_ready", payload: { tableId, user } });
         return;
       }
 
-      setError("Ready-state controls are available once the Render lobby is configured.");
+      try {
+        const response = await fetch("/api/table", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fid: user.fid,
+            table_id: tableId,
+            action: "toggle_ready",
+          }),
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Unable to update ready state.");
+        }
+
+        await refreshCurrentApiLobby();
+      } catch (caughtError) {
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Unable to update ready state."
+        );
+      }
     },
-    [send]
+    [refreshCurrentApiLobby, send]
   );
 
   return {
@@ -410,8 +455,8 @@ export function useRenderLobby() {
     status,
     error,
     mode: env.hasRenderLobby ? "render" : "vercel_api",
-    supportsTableCreation: env.hasRenderLobby,
-    supportsReadyState: env.hasRenderLobby,
+    supportsTableCreation: true,
+    supportsReadyState: true,
     createTable,
     joinTable,
     leaveTable,

@@ -104,13 +104,13 @@ export default function LeakSnipeUniversalUI() {
   }, [activeTableId, seatedTable, tables]);
 
   function createTable() {
-    lobby.createTable({
+    void lobby.createTable({
       name: "Neon Felt Table",
       game: "NLHE",
       stakes: "$0.10 / $0.25",
       maxPlayers: 6,
       buyIn: 25,
-    });
+    }, user);
   }
 
   function joinTable(table: PokerTable) {
@@ -124,7 +124,7 @@ export default function LeakSnipeUniversalUI() {
   }
 
   function toggleReady(table: PokerTable) {
-    lobby.toggleReady(table.id, user);
+    void lobby.toggleReady(table.id, user);
   }
 
   return (
