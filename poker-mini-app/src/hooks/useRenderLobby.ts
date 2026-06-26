@@ -11,8 +11,10 @@ export type Seat = {
   seatNumber: number;
   user: UniversalUser | null;
   stack: number;
+  currentBet: number;
   isReady: boolean;
   isBot: boolean;
+  holeCards: string[];
 };
 
 export type PokerTable = {
@@ -22,9 +24,18 @@ export type PokerTable = {
   stakes: string;
   maxPlayers: number;
   buyIn: number;
+  visibility: "public" | "club";
+  clubId: string | null;
+  clubName: string | null;
   status: TableStatus;
   createdAt: number;
   startTime?: string | null;
+  board: string[];
+  potSize: number;
+  currentBet: number;
+  phase: string;
+  actionHistory: string[];
+  currentTurnFid: number | null;
   seats: Seat[];
 };
 
@@ -44,17 +55,28 @@ type CurrentApiLobbyTable = {
   stakes_label?: string;
   max_players: number;
   buy_in?: number;
+  visibility?: "public" | "club";
+  club_id?: string | null;
+  club_name?: string | null;
   status: "waiting" | "playing" | "finished";
   normalized_status?: TableStatus;
   created_at?: string | null;
   start_time?: string | null;
+  board?: string;
+  pot_size?: number;
+  current_bet?: number;
+  phase?: string;
+  action_history?: string;
+  current_turn_fid?: number | null;
 };
 
 type CurrentApiPlayer = {
   fid: number;
   username: string;
   pfp_url?: string;
+  hand?: string;
   stack_size?: number;
+  current_bet?: number;
   status?: "waiting" | "playing" | "folded" | "sitting_out";
   seat_index?: number;
   is_ready?: number;
@@ -104,8 +126,10 @@ function mapCurrentApiTable(
     seatNumber: index + 1,
     user: null,
     stack: 0,
+    currentBet: 0,
     isReady: false,
     isBot: false,
+    holeCards: [],
   }));
 
   for (const [fallbackIndex, player] of players.entries()) {
@@ -121,8 +145,10 @@ function mapCurrentApiTable(
       seatNumber: seatIndex + 1,
       user: mapPlayerToUniversalUser(player),
       stack: Number(player.stack_size || 0),
+      currentBet: Number(player.current_bet || 0),
       isReady: Number(player.is_ready || 0) === 1,
       isBot: Number(player.is_bot || 0) === 1,
+      holeCards: String(player.hand || "").split(",").filter(Boolean),
     };
   }
 
@@ -134,6 +160,9 @@ function mapCurrentApiTable(
     game: table.game_type ?? "NLHE",
     stakes: table.stakes_label ?? "$0.50 / $1",
     buyIn: Number(table.buy_in || 50),
+    visibility: table.visibility === "club" ? "club" : "public",
+    clubId: table.club_id ? String(table.club_id) : null,
+    clubName: table.club_name ? String(table.club_name) : null,
     maxPlayers,
     status: mapStatus(table.status, occupiedSeats, maxPlayers, table.normalized_status),
     createdAt: table.created_at
@@ -142,11 +171,19 @@ function mapCurrentApiTable(
         ? new Date(table.start_time).getTime()
         : Date.now(),
     startTime: table.start_time ?? null,
+    board: String(table.board || "").split(",").filter(Boolean),
+    potSize: Number(table.pot_size || 0),
+    currentBet: Number(table.current_bet || 0),
+    phase: String(table.phase || "preflop"),
+    actionHistory: String(table.action_history || "").split("|").filter(Boolean),
+    currentTurnFid: Number.isSafeInteger(Number(table.current_turn_fid))
+      ? Number(table.current_turn_fid)
+      : null,
     seats: seatDefaults,
   };
 }
 
-export function useRenderLobby() {
+export function useRenderLobby(currentUser?: UniversalUser) {
   const wsRef = useRef<WebSocket | null>(null);
   const [state, setState] = useState<LobbyState>({
     tables: [],
@@ -164,7 +201,12 @@ export function useRenderLobby() {
 
   const refreshCurrentApiLobby = useCallback(async () => {
     try {
-      const response = await fetch("/api/table", { cache: "no-store" });
+      const response = await fetch(
+        currentUser
+          ? `/api/table?fid=${encodeURIComponent(String(currentUser.fid))}`
+          : "/api/table",
+        { cache: "no-store" },
+      );
 
       if (!response.ok) {
         throw new Error("Unable to load the poker lobby.");
@@ -177,7 +219,9 @@ export function useRenderLobby() {
         tables.map(async (table) => {
           try {
             const detailResponse = await fetch(
-              `/api/table?table_id=${encodeURIComponent(table.id)}`,
+              `/api/table?table_id=${encodeURIComponent(table.id)}${
+                currentUser ? `&fid=${encodeURIComponent(String(currentUser.fid))}` : ""
+              }`,
               { cache: "no-store" }
             );
 
@@ -210,7 +254,7 @@ export function useRenderLobby() {
           : "Unable to reach the lobby."
       );
     }
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     if (!env.hasRenderLobby || !wsUrl) {
@@ -388,6 +432,8 @@ export function useRenderLobby() {
       stakes: string;
       maxPlayers: number;
       buyIn: number;
+      visibility?: "public" | "club";
+      clubId?: string | null;
     }, user?: UniversalUser) => {
       if (env.hasRenderLobby) {
         send({ type: "create_table", payload });
@@ -402,6 +448,7 @@ export function useRenderLobby() {
             fid: user?.fid ?? -1,
             action: "create",
             ...payload,
+            club_id: payload.clubId ?? undefined,
           }),
         });
         const data = await response.json();
@@ -468,5 +515,6 @@ export function useRenderLobby() {
     joinTable,
     leaveTable,
     toggleReady,
+    refresh: refreshCurrentApiLobby,
   };
 }

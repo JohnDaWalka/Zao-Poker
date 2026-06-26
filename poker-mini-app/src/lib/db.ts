@@ -109,6 +109,78 @@ async function initializeDb() {
     "CREATE INDEX IF NOT EXISTS idx_hand_history_fid_created ON hand_history(fid, created_at)",
   );
 
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS table_chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_id TEXT NOT NULL,
+      fid INTEGER NOT NULL,
+      username TEXT NOT NULL,
+      pfp_url TEXT DEFAULT '',
+      is_bot INTEGER DEFAULT 0,
+      message TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_table_chat_messages_table_created ON table_chat_messages(table_id, created_at)",
+  );
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS user_chat_mutes (
+      fid INTEGER NOT NULL,
+      muted_fid INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (fid, muted_fid)
+    )
+  `);
+  await db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_user_chat_mutes_fid ON user_chat_mutes(fid, muted_fid)",
+  );
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS table_chat_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      table_id TEXT NOT NULL,
+      message_id INTEGER NOT NULL,
+      reporter_fid INTEGER NOT NULL,
+      reported_fid INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      status TEXT DEFAULT 'open',
+      reviewed_by_fid INTEGER,
+      reviewed_at DATETIME,
+      resolution_note TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_table_chat_reports_table_created ON table_chat_reports(table_id, created_at)",
+  );
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS clubs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      invite_code TEXT UNIQUE NOT NULL,
+      created_by_fid INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS club_memberships (
+      club_id TEXT NOT NULL,
+      fid INTEGER NOT NULL,
+      username TEXT,
+      pfp_url TEXT DEFAULT '',
+      role TEXT DEFAULT 'member',
+      joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (club_id, fid)
+    )
+  `);
+  await db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_club_memberships_fid ON club_memberships(fid, club_id)",
+  );
+
   // Running per-player aggregates for Leaderboards / Dashboard, updated
   // alongside each hand_history insert so leaderboard reads stay O(1).
   await db.execute(`
@@ -132,6 +204,9 @@ async function initializeDb() {
     game_type: "TEXT DEFAULT 'NLHE'",
     stakes_label: "TEXT DEFAULT '$0.50 / $1'",
     buy_in: "INTEGER DEFAULT 50",
+    visibility: "TEXT DEFAULT 'public'",
+    club_id: "TEXT",
+    club_name: "TEXT DEFAULT ''",
     action_history: "TEXT DEFAULT ''",
     start_time: "DATETIME",
     created_by_fid: "INTEGER",
@@ -153,6 +228,13 @@ async function initializeDb() {
     // bet/call/raise/all-in), reset at the start of each new hand. Used to
     // compute each player's net win/loss for hand_history / player_stats.
     total_invested: "INTEGER DEFAULT 0",
+  });
+
+  await addMissingColumns("table_chat_reports", {
+    status: "TEXT DEFAULT 'open'",
+    reviewed_by_fid: "INTEGER",
+    reviewed_at: "DATETIME",
+    resolution_note: "TEXT DEFAULT ''",
   });
 
   // Pre-populate default tournament rooms with start times
@@ -212,6 +294,8 @@ async function initializeDb() {
           ELSE 50
         END
       ),
+      visibility = COALESCE(visibility, 'public'),
+      club_name = COALESCE(club_name, ''),
       action_history = COALESCE(action_history, ''),
       created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
   `);

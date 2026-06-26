@@ -355,7 +355,18 @@ function getTableMetadata(tableState: any) {
     game_type: String(tableState.game_type || "NLHE"),
     stakes_label: String(tableState.stakes_label || "$0.50 / $1"),
     buy_in: Number(tableState.buy_in || 50),
+    visibility: String(tableState.visibility || "public"),
+    club_id: tableState.club_id ? String(tableState.club_id) : null,
+    club_name: tableState.club_name ? String(tableState.club_name) : null,
   };
+}
+
+async function isClubMember(fid: number, clubId: string) {
+  const { rows } = await db.execute({
+    sql: "SELECT 1 FROM club_memberships WHERE club_id = ? AND fid = ? LIMIT 1",
+    args: [clubId, fid],
+  });
+  return rows.length > 0;
 }
 
 function createCustomTableId(name: string) {
@@ -769,6 +780,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const tableId = searchParams.get("table_id");
   const currentFidStr = searchParams.get("fid");
+  const currentFid = Number(currentFidStr);
+  const hasCurrentFid = currentFidStr !== null && Number.isSafeInteger(currentFid);
   const requestId = crypto.randomUUID().slice(0, 8);
   const startTime = Date.now();
   const finishJson = (body: unknown, init?: ResponseInit) => {
@@ -793,6 +806,19 @@ export async function GET(request: Request) {
         return finishJson(
           { success: false, error: "Table not found" },
           { status: 404 },
+        );
+      }
+
+      if (
+        String(tableState.visibility || "public") === "club" &&
+        (
+          !hasCurrentFid ||
+          !(await isClubMember(currentFid, String(tableState.club_id || "")))
+        )
+      ) {
+        return finishJson(
+          { success: false, error: "This private club table is only visible to club members" },
+          { status: 403 },
         );
       }
 
@@ -918,7 +944,26 @@ export async function GET(request: Request) {
         return acc;
       }, {});
 
-      const tablesWithCounts = tables.map((table: any) => {
+      const viewerClubIds = hasCurrentFid
+        ? new Set(
+            (
+              await db.execute({
+                sql: "SELECT club_id FROM club_memberships WHERE fid = ?",
+                args: [currentFid],
+              })
+            ).rows.map((row: any) => String(row.club_id)),
+          )
+        : new Set<string>();
+
+      const visibleTables = tables.filter((table: any) => {
+        const visibility = String(table.visibility || "public");
+        if (visibility !== "club") {
+          return true;
+        }
+        return viewerClubIds.has(String(table.club_id || ""));
+      });
+
+      const tablesWithCounts = visibleTables.map((table: any) => {
         const tablePlayers = playersByTable[String(table.id)] ?? [];
 
         return {
@@ -954,11 +999,14 @@ export async function POST(request: Request) {
       username,
       pfp_url,
       table_id,
+      club_id: requestedClubIdRaw,
+      clubId: requestedClubIdAlt,
       action,
       amount,
       name,
       game,
       stakes,
+      visibility: requestedVisibilityRaw,
       maxPlayers: requestedMaxPlayers,
       buyIn: requestedBuyIn,
     } = await request.json();
@@ -989,6 +1037,48 @@ export async function POST(request: Request) {
         typeof stakes === "string" && stakes.trim() ? stakes.trim() : "$0.50 / $1";
       const maxPlayers = Math.min(9, Math.max(2, Number(requestedMaxPlayers || 6)));
       const buyIn = Math.max(1, Math.round(Number(requestedBuyIn || 50)));
+      const requestedVisibility = requestedVisibilityRaw === "club" ? "club" : "public";
+      const requestedClubId =
+        typeof requestedClubIdRaw === "string" && requestedClubIdRaw.trim()
+          ? requestedClubIdRaw.trim()
+          : typeof requestedClubIdAlt === "string" && requestedClubIdAlt.trim()
+            ? requestedClubIdAlt.trim()
+            : "";
+      let clubId: string | null = null;
+      let clubName = "";
+
+      if (requestedVisibility === "club") {
+        if (!requestedClubId) {
+          return NextResponse.json(
+            { success: false, error: "A club selection is required for private home games" },
+            { status: 400 },
+          );
+        }
+
+        const { rows: clubRows } = await db.execute({
+          sql: `
+            SELECT c.id, c.name
+            FROM clubs c
+            JOIN club_memberships cm
+              ON cm.club_id = c.id
+            WHERE c.id = ? AND cm.fid = ?
+            LIMIT 1
+          `,
+          args: [requestedClubId, fid],
+        });
+        const club = clubRows[0];
+
+        if (!club) {
+          return NextResponse.json(
+            { success: false, error: "You must be a member of this club to host a private table" },
+            { status: 403 },
+          );
+        }
+
+        clubId = String(club.id);
+        clubName = String(club.name);
+      }
+
       effectiveTableId = createCustomTableId(tableName);
 
       await db.execute({
@@ -1000,12 +1090,15 @@ export async function POST(request: Request) {
             stakes_label,
             max_players,
             buy_in,
+            visibility,
+            club_id,
+            club_name,
             status,
             start_time,
             created_by_fid,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'waiting', NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         `,
         args: [
           effectiveTableId,
@@ -1014,6 +1107,9 @@ export async function POST(request: Request) {
           normalizedStakes,
           maxPlayers,
           buyIn,
+          requestedVisibility,
+          clubId,
+          clubName,
           fid,
         ],
       });
@@ -1034,6 +1130,19 @@ export async function POST(request: Request) {
         return NextResponse.json(
           { success: false, error: "Table not found" },
           { status: 404 },
+        );
+      }
+
+      if (
+        String(requestedTable.visibility || "public") === "club" &&
+        (
+          !Number.isSafeInteger(fid) ||
+          !(await isClubMember(fid, String(requestedTable.club_id || "")))
+        )
+      ) {
+        return NextResponse.json(
+          { success: false, error: "This private club table is only available to club members" },
+          { status: 403 },
         );
       }
     }
