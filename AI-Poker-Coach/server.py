@@ -1,6 +1,7 @@
 import sys
 import os
 import re
+import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -72,6 +73,9 @@ class HandAction(BaseModel):
 
 @app.post("/api/analyze_action")
 async def analyze_action(payload: HandAction):
+    request_id = str(uuid.uuid4())[:8]
+    print(f"[{request_id}] Analyzing hand for fid={payload.fid}")
+
     # Construct a hand_json schema that the AIProcessor expects
     hand_json = {
         "player_id": str(payload.fid),
@@ -87,7 +91,7 @@ async def analyze_action(payload: HandAction):
         # Run the AI hand analysis
         result = processor.analyze_hand(hand_json)
         
-        # Calculate Equity using Poker-Suite Engine
+        # Calculate equity using exact hero cards versus a random opponent.
         hero_cards = payload.cards[:2]
         board_cards = payload.cards[2:] or None
         equity_data = equity_sim.hero_vs_random_opponent(
@@ -98,12 +102,14 @@ async def analyze_action(payload: HandAction):
         
         return {
             "success": True,
+            "request_id": request_id,
             "analysis": result.analysis,
             "tags": result.tags,
             "confidence": result.confidence,
             "gto": equity_data
         }
     except Exception as e:
+        print(f"[{request_id}] ERROR: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

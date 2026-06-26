@@ -765,11 +765,20 @@ async function buildTableResponse(tableId: string) {
 }
 
 export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const tableId = searchParams.get("table_id");
+  const currentFidStr = searchParams.get("fid");
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const startTime = Date.now();
+  const finishJson = (body: unknown, init?: ResponseInit) => {
+    const elapsed = Date.now() - startTime;
+    console.log(`[${requestId}] GET /api/table complete (${elapsed}ms)`);
+    return NextResponse.json(body, init);
+  };
+
   try {
     await ensureDb();
-
-    const { searchParams } = new URL(request.url);
-    const tableId = searchParams.get("table_id");
+    console.log(`[${requestId}] GET /api/table start, tableId=${tableId}, fid=${currentFidStr}`);
 
     if (tableId) {
       // Get single table state
@@ -780,7 +789,7 @@ export async function GET(request: Request) {
 
       let tableState = rows[0];
       if (!tableState) {
-        return NextResponse.json(
+        return finishJson(
           { success: false, error: "Table not found" },
           { status: 404 },
         );
@@ -804,7 +813,7 @@ export async function GET(request: Request) {
             tableId,
             waitingPlayers.map((player) => Number(player.fid)),
           );
-          await runAutoplayUntilHuman(tableId);
+          await runAutoplayUntilHuman(tableId, 12);
           const { rows: updatedRows } = await db.execute({
             sql: "SELECT * FROM tables WHERE id = ?",
             args: [tableId],
@@ -813,7 +822,6 @@ export async function GET(request: Request) {
         }
       }
 
-      const currentFidStr = searchParams.get("fid");
       if (currentFidStr) {
         await db.execute({
           sql: "UPDATE players SET last_seen = CURRENT_TIMESTAMP WHERE fid = ? AND table_id = ?",
@@ -881,17 +889,17 @@ export async function GET(request: Request) {
         }
       }
 
-      await runAutoplayUntilHuman(tableId);
+      await runAutoplayUntilHuman(tableId, 12);
 
       const response = await buildTableResponse(tableId);
       if (!response) {
-        return NextResponse.json(
+        return finishJson(
           { success: false, error: "Table not found" },
           { status: 404 },
         );
       }
 
-      return NextResponse.json(response);
+      return finishJson(response);
     } else {
       // Lobby Mode - list all tables and player counts
       await ensureDefaultLobbyBots();
@@ -925,14 +933,14 @@ export async function GET(request: Request) {
         };
       });
 
-      return NextResponse.json({
+      return finishJson({
         success: true,
         tables: tablesWithCounts
       });
     }
   } catch (error) {
     console.error("Database error:", error);
-    return NextResponse.json({ success: false, error: "Failed to fetch table state" }, { status: 500 });
+    return finishJson({ success: false, error: "Failed to fetch table state" }, { status: 500 });
   }
 }
 
@@ -1328,7 +1336,7 @@ export async function POST(request: Request) {
     }
 
     await ensureAutoplayBot(effectiveTableId);
-    await runAutoplayUntilHuman(effectiveTableId);
+    await runAutoplayUntilHuman(effectiveTableId, 12);
     const response = await buildTableResponse(effectiveTableId);
     if (!response) {
       return NextResponse.json(
