@@ -30,20 +30,28 @@ export function useTableChat(tableId: string | null, viewerFid?: number) {
   const [messages, setMessages] = useState<TableChatMessage[]>([]);
   const [mutedFids, setMutedFids] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   const [sending, setSending] = useState(false);
   const [moderating, setModerating] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setInitialized(false);
+  }, [tableId]);
 
   const refresh = useCallback(async (viewerFid?: number, signal?: AbortSignal) => {
     if (!tableId) {
       setMessages([]);
       setMutedFids([]);
+      setInitialized(false);
       setLoading(false);
       setError(null);
       return;
     }
 
-    setLoading(true);
+    if (!initialized) {
+      setLoading(true);
+    }
     try {
       const response = await fetch(
         `/api/table/chat?table_id=${encodeURIComponent(tableId)}&limit=50${
@@ -59,6 +67,7 @@ export function useTableChat(tableId: string | null, viewerFid?: number) {
 
       setMessages(data.messages ?? []);
       setMutedFids((data.mutedFids ?? []).filter(Number.isSafeInteger));
+      setInitialized(true);
       setError(null);
     } catch (caughtError) {
       if (signal?.aborted) {
@@ -75,7 +84,7 @@ export function useTableChat(tableId: string | null, viewerFid?: number) {
         setLoading(false);
       }
     }
-  }, [tableId]);
+  }, [initialized, tableId]);
 
   useEffect(() => {
     const abortController = new AbortController();

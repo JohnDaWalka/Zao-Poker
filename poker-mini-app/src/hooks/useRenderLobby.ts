@@ -198,12 +198,14 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     if (!env.hasRenderLobby) return "";
     return `${env.renderWsUrl.replace(/\/$/, "")}/ws`;
   }, []);
+  const currentFid =
+    currentUser && Number.isSafeInteger(currentUser.fid) ? Number(currentUser.fid) : null;
 
   const refreshCurrentApiLobby = useCallback(async () => {
     try {
       const response = await fetch(
-        currentUser
-          ? `/api/table?fid=${encodeURIComponent(String(currentUser.fid))}`
+        currentFid !== null
+          ? `/api/table?fid=${encodeURIComponent(String(currentFid))}`
           : "/api/table",
         { cache: "no-store" },
       );
@@ -220,7 +222,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           try {
             const detailResponse = await fetch(
               `/api/table?table_id=${encodeURIComponent(table.id)}${
-                currentUser ? `&fid=${encodeURIComponent(String(currentUser.fid))}` : ""
+                currentFid !== null ? `&fid=${encodeURIComponent(String(currentFid))}` : ""
               }`,
               { cache: "no-store" }
             );
@@ -254,7 +256,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           : "Unable to reach the lobby."
       );
     }
-  }, [currentUser]);
+  }, [currentFid]);
 
   useEffect(() => {
     if (!env.hasRenderLobby || !wsUrl) {

@@ -63,28 +63,31 @@ export function useUniversalUser(): UniversalUser {
 
   return useMemo(() => {
     const farcasterFid = context?.user?.fid;
+    const neynarUsername = neynarUser?.username;
+    const neynarPfpUrl = neynarUser?.pfp_url;
+    const walletAddress = wallet.address;
 
     if (farcasterFid) {
       return {
         id: `fid:${farcasterFid}`,
         fid: farcasterFid,
-        username: neynarUser?.username ?? `User#${farcasterFid}`,
-        displayName: neynarUser?.username ?? `User#${farcasterFid}`,
-        avatarUrl: neynarUser?.pfp_url,
-        walletAddress: wallet.address ?? undefined,
-        chainNamespace: wallet.address ? wallet.namespace : undefined,
+        username: neynarUsername ?? `User#${farcasterFid}`,
+        displayName: neynarUsername ?? `User#${farcasterFid}`,
+        avatarUrl: neynarPfpUrl,
+        walletAddress: walletAddress ?? undefined,
+        chainNamespace: walletAddress ? wallet.namespace : undefined,
         runtimeHost: "farcaster",
         authSource: "farcaster",
       };
     }
 
-    if (wallet.isConnected && wallet.address) {
+    if (wallet.isConnected && walletAddress) {
       return {
-        id: `wallet:evm:${wallet.address.toLowerCase()}`,
-        fid: pseudoFidFromString(`evm:${wallet.address.toLowerCase()}`),
-        username: shortAddress(wallet.address),
-        displayName: shortAddress(wallet.address),
-        walletAddress: wallet.address,
+        id: `wallet:evm:${walletAddress.toLowerCase()}`,
+        fid: pseudoFidFromString(`evm:${walletAddress.toLowerCase()}`),
+        username: shortAddress(walletAddress),
+        displayName: shortAddress(walletAddress),
+        walletAddress,
         chainNamespace: wallet.namespace,
         runtimeHost,
         authSource: "wallet",
@@ -104,5 +107,14 @@ export function useUniversalUser(): UniversalUser {
       runtimeHost,
       authSource: "guest",
     };
-  }, [context?.user?.fid, guestId, neynarUser, runtimeHost, wallet]);
+  }, [
+    context?.user?.fid,
+    guestId,
+    neynarUser?.pfp_url,
+    neynarUser?.username,
+    runtimeHost,
+    wallet.address,
+    wallet.isConnected,
+    wallet.namespace,
+  ]);
 }
