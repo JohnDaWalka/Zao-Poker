@@ -84,7 +84,10 @@ export function compareHandRanks(a: HandRank, b: HandRank): number {
 /** Best 5-card hand out of all combinations of hole cards + board. */
 export function bestHandRank(holeCards: Card[], board: Card[]): HandRank {
   const allCards = [...holeCards, ...board].filter(Boolean);
-  if (allCards.length < 5) return evaluateFiveCardHand(allCards.slice(0, 5));
+  if (allCards.length < 5) {
+    const values = allCards.map(rankValue).sort((a, b) => b - a);
+    return [0, ...values];
+  }
 
   let best: HandRank | null = null;
   for (const combo of combinations(allCards, 5)) {

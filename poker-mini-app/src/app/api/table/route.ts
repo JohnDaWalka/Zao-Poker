@@ -3,7 +3,17 @@ import { db, initDb } from "~/lib/db";
 import { analyzeHoldemSpot } from "~/lib/game-theory";
 import { resolveFoldWin, resolveShowdown } from "~/lib/hand-history";
 
-let initialized = false;
+let dbReady: Promise<void> | null = null;
+
+function ensureDb() {
+  if (!dbReady) {
+    dbReady = initDb().catch((error) => {
+      dbReady = null;
+      throw error;
+    });
+  }
+  return dbReady;
+}
 
 // 52-card deck generator and shuffler
 function createDeck(): string[] {
@@ -693,7 +703,7 @@ async function playAutomatedTurn(tableId: string) {
   return true;
 }
 
-async function runAutoplayUntilHuman(tableId: string, maxTurns = 4) {
+async function runAutoplayUntilHuman(tableId: string, maxTurns = 12) {
   for (let turn = 0; turn < maxTurns; turn += 1) {
     const acted = await playAutomatedTurn(tableId);
     if (!acted) {
@@ -756,10 +766,7 @@ async function buildTableResponse(tableId: string) {
 
 export async function GET(request: Request) {
   try {
-    if (!initialized) {
-      await initDb();
-      initialized = true;
-    }
+    await ensureDb();
 
     const { searchParams } = new URL(request.url);
     const tableId = searchParams.get("table_id");
@@ -931,10 +938,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    if (!initialized) {
-      await initDb();
-      initialized = true;
-    }
+    await ensureDb();
 
     const {
       fid: rawFid,
@@ -1207,26 +1211,26 @@ export async function POST(request: Request) {
       });
       await dealNewHand(effectiveTableId, players.map((p: any) => p.fid));
     } else if (action === "fold") {
-      const { rows: stateRows } = await db.execute({ sql: "SELECT current_turn_fid, last_aggressor_fid, pot_size, board, phase FROM tables WHERE id = ?", args: [table_id] });
+      const { rows: stateRows } = await db.execute({ sql: "SELECT current_turn_fid, last_aggressor_fid, pot_size, board, phase FROM tables WHERE id = ?", args: [effectiveTableId] });
       const currentGameState = stateRows[0];
       
       if (currentGameState && currentGameState.current_turn_fid === fid) {
-        const { rows: oldPlayers } = await db.execute({ sql: "SELECT fid FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
+        const { rows: oldPlayers } = await db.execute({ sql: "SELECT fid FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [effectiveTableId] });
         const currentIndex = oldPlayers.findIndex((p: any) => p.fid === fid);
         const nextPlayerIndex = (currentIndex + 1) % oldPlayers.length;
         const nextPlayerFid = oldPlayers[nextPlayerIndex].fid;
         
         // Update status to folded instead of deleting to keep them at the table
-        await db.execute({ sql: "UPDATE players SET status = 'folded' WHERE fid = ? AND table_id = ?", args: [fid, table_id] });
-        await appendActionHistory(table_id, `p${fid}`, "fold");
+        await db.execute({ sql: "UPDATE players SET status = 'folded' WHERE fid = ? AND table_id = ?", args: [fid, effectiveTableId] });
+        await appendActionHistory(effectiveTableId, `p${fid}`, "fold");
         
-        const { rows: remaining } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
+        const { rows: remaining } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [effectiveTableId] });
         if (remaining.length === 1) {
           // Last player remaining wins pot
-          await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [currentGameState.pot_size, remaining[0].fid, table_id] });
-          await db.execute({ sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?", args: [table_id] });
+          await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [currentGameState.pot_size, remaining[0].fid, effectiveTableId] });
+          await db.execute({ sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?", args: [effectiveTableId] });
           await resolveFoldWin(
-            table_id,
+            effectiveTableId,
             Number(remaining[0].fid),
             Number(currentGameState.pot_size || 0),
             String(currentGameState.board || ""),
@@ -1235,10 +1239,10 @@ export async function POST(request: Request) {
         } else {
           const streetOver = remaining.every((p: any) => p.has_acted === 1 && p.current_bet === currentGameState.current_bet);
           if (streetOver) {
-             const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [table_id]});
-             await advanceGame(table_id, freshState[0]);
+             const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [effectiveTableId]});
+             await advanceGame(effectiveTableId, freshState[0]);
           } else {
-             await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [nextPlayerFid, table_id] });
+             await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [nextPlayerFid, effectiveTableId] });
              // We'd trigger AI here, but AI is never human folding, so we just let it be. Wait, if human folds and next is AI? 
              // We don't trigger AI here in the original code either, it expects the client to poll? No, original code didn't trigger AI on fold.
              // Wait, if human folds, the hand either ends (remaining=1) or it passes to the next. In 2-player it always ends.
