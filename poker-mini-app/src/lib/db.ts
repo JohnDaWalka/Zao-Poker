@@ -55,6 +55,7 @@ async function initializeDb() {
       current_bet INTEGER DEFAULT 0,
       board TEXT DEFAULT '',
       deck TEXT DEFAULT '',
+      action_history TEXT DEFAULT '',
       phase TEXT DEFAULT 'preflop',
       start_time DATETIME,
       created_by_fid INTEGER,
@@ -130,6 +131,7 @@ async function initializeDb() {
     game_type: "TEXT DEFAULT 'NLHE'",
     stakes_label: "TEXT DEFAULT '$0.50 / $1'",
     buy_in: "INTEGER DEFAULT 50",
+    action_history: "TEXT DEFAULT ''",
     start_time: "DATETIME",
     created_by_fid: "INTEGER",
     created_at: "DATETIME",
@@ -208,6 +210,7 @@ async function initializeDb() {
           ELSE 50
         END
       ),
+      action_history = COALESCE(action_history, ''),
       created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
   `);
 

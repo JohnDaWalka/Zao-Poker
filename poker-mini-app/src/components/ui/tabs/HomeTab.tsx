@@ -67,6 +67,7 @@ export function HomeTab() {
   const [playerCurrentBet, setPlayerCurrentBet] = useState(0);
   const [seatedPlayers, setSeatedPlayers] = useState<any[]>([]);
   const [currentTurnFid, setCurrentTurnFid] = useState<number | null>(null);
+  const [tableActionHistory, setTableActionHistory] = useState<string[]>([]);
   const [isTrainingMode, setIsTrainingMode] = useState(false);
 
   // Blind states
@@ -112,6 +113,11 @@ export function HomeTab() {
           setPhase(data.gameState.phase);
           setCurrentBet(data.gameState.current_bet || 0);
           setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+          setTableActionHistory(
+            data.gameState.action_history
+              ? String(data.gameState.action_history).split("|").filter(Boolean)
+              : []
+          );
           setSeatedPlayers(data.players || []);
           setCurrentBlinds(data.gameState.current_blinds);
           setNextLevelInSecs(data.gameState.next_level_in_secs);
@@ -182,6 +188,11 @@ export function HomeTab() {
       setPotSize(data.gameState.pot_size);
       setPhase(data.gameState.phase);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+      setTableActionHistory(
+        data.gameState.action_history
+          ? String(data.gameState.action_history).split("|").filter(Boolean)
+          : []
+      );
       setSeatedPlayers(data.players || []);
       if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
       if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
@@ -207,6 +218,7 @@ export function HomeTab() {
     setGameState("lobby");
     setSelectedTableId("");
     setCoachFeedback(null);
+    setTableActionHistory([]);
   };
 
   const handleStartPractice = async () => {
@@ -238,6 +250,11 @@ export function HomeTab() {
       setPhase(data.gameState.phase);
       setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+      setTableActionHistory(
+        data.gameState.action_history
+          ? String(data.gameState.action_history).split("|").filter(Boolean)
+          : []
+      );
       if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
       if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
     }
@@ -257,6 +274,11 @@ export function HomeTab() {
       amount = playerStack;
     }
 
+    const nextActionHistory = [
+      ...tableActionHistory,
+      `p${universalUser.fid}:${action}${amount > 0 ? `:${Math.round(amount)}` : ""}`,
+    ];
+
     const res = await fetch("/api/table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -274,6 +296,11 @@ export function HomeTab() {
       setPhase(data.gameState.phase);
       setCurrentBet(data.gameState.current_bet || 0);
       setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
+      setTableActionHistory(
+        data.gameState.action_history
+          ? String(data.gameState.action_history).split("|").filter(Boolean)
+          : []
+      );
       if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
       if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
     }
@@ -292,7 +319,7 @@ export function HomeTab() {
           board,
           to_call: toCall,
           opponent_count: Math.max(1, seatedPlayers.length - 1),
-          action_history: [],
+          action_history: nextActionHistory,
         })
       });
       const resData = await resAnalyze.json();

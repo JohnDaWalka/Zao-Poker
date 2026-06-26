@@ -23,6 +23,44 @@ function createDeck(): string[] {
   return deck;
 }
 
+function encodeActionEntry(actor: string, action: string, amount?: number) {
+  const normalizedActor = actor.replace(/[^a-zA-Z0-9_-]/g, "");
+  const normalizedAction = action.replace(/[^a-zA-Z0-9_-]/g, "");
+  const normalizedAmount =
+    typeof amount === "number" && Number.isFinite(amount)
+      ? `:${Math.round(amount)}`
+      : "";
+  return `${normalizedActor}:${normalizedAction}${normalizedAmount}`;
+}
+
+function parseActionHistory(raw: unknown) {
+  return String(raw || "")
+    .split("|")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+async function appendActionHistory(
+  tableId: string,
+  actor: string,
+  action: string,
+  amount?: number,
+) {
+  const entry = encodeActionEntry(actor, action, amount);
+  await db.execute({
+    sql: `
+      UPDATE tables
+      SET action_history = CASE
+        WHEN action_history IS NULL OR action_history = '' THEN ?
+        ELSE action_history || '|' || ?
+      END,
+      updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `,
+    args: [entry, entry, tableId],
+  });
+}
+
 // Blind levels (6-minute intervals). Ante is fixed at 25% of the Big Blind.
 const BLIND_LEVELS = [
   { sb: 5, bb: 10, ante: 2.5 },
@@ -73,6 +111,7 @@ function evaluateAIAction(
   toCall: number,
   potSize: number,
   stackSize: number,
+  actionHistory: string[] = [],
 ): { action: "fold" | "call" | "raise" | "check" | "bet"; targetBet: number | null } {
   if (!aiHandStr) {
     return { action: "fold", targetBet: null };
@@ -92,7 +131,7 @@ function evaluateAIAction(
     stackSize,
     opponentCount: 1,
     position: "oop",
-    history: [],
+    history: actionHistory,
     iterations: 220,
     trials: 320,
   });
@@ -181,7 +220,7 @@ async function dealNewHand(tableId: string, fids: number[]) {
   
   // Initialize pot
   await db.execute({
-    sql: "UPDATE tables SET pot_size = ?, current_bet = ?, board = '', deck = ?, phase = 'preflop', status = 'playing', current_turn_fid = ?, last_aggressor_fid = ?, turn_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    sql: "UPDATE tables SET pot_size = ?, current_bet = ?, board = '', deck = ?, action_history = '', phase = 'preflop', status = 'playing', current_turn_fid = ?, last_aggressor_fid = ?, turn_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     args: [potSize, blinds.bb, deckStr, currentTurnFid, lastAggressorFid, tableId]
   });
 }
@@ -641,7 +680,7 @@ export async function POST(request: Request) {
       // in "playing" after a serverless timeout or disconnect.
       if (requestedTable.status === "playing" && !isAlreadySeated && playerCount < 2) {
         await db.execute({
-          sql: "UPDATE tables SET status = 'waiting', pot_size = 0, current_bet = 0, board = '', deck = '', phase = 'preflop', current_turn_fid = NULL, last_aggressor_fid = NULL WHERE id = ?",
+          sql: "UPDATE tables SET status = 'waiting', pot_size = 0, current_bet = 0, board = '', deck = '', action_history = '', phase = 'preflop', current_turn_fid = NULL, last_aggressor_fid = NULL WHERE id = ?",
           args: [effectiveTableId],
         });
         await db.execute({
@@ -760,7 +799,7 @@ export async function POST(request: Request) {
       if (humanPlayers.length === 0) {
         await db.execute({ sql: "DELETE FROM players WHERE table_id = ?", args: [effectiveTableId] });
         await db.execute({
-          sql: "UPDATE tables SET status = 'waiting', pot_size = 0, current_bet = 0, board = '', deck = '', phase = 'preflop', current_turn_fid = NULL, last_aggressor_fid = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          sql: "UPDATE tables SET status = 'waiting', pot_size = 0, current_bet = 0, board = '', deck = '', action_history = '', phase = 'preflop', current_turn_fid = NULL, last_aggressor_fid = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
           args: [effectiveTableId],
         });
       } else if (requestedTable.status === "playing") {
@@ -806,6 +845,7 @@ export async function POST(request: Request) {
         
         // Update status to folded instead of deleting to keep them at the table
         await db.execute({ sql: "UPDATE players SET status = 'folded' WHERE fid = ? AND table_id = ?", args: [fid, table_id] });
+        await appendActionHistory(table_id, `p${fid}`, "fold");
         
         const { rows: remaining } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
         if (remaining.length === 1) {
@@ -884,6 +924,14 @@ export async function POST(request: Request) {
         
         // Action is valid, set has_acted = 1
         await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = ? AND table_id = ?", args: [fid, table_id] });
+        await appendActionHistory(
+          table_id,
+          `p${fid}`,
+          action,
+          action === "bet" || action === "raise" || action === "all_in" || action === "call"
+            ? actionAmount || betDiff || undefined
+            : undefined,
+        );
 
         const { rows: remainingActive } = await db.execute({ sql: "SELECT fid, current_bet, has_acted, hand FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
         
@@ -913,6 +961,7 @@ export async function POST(request: Request) {
                 aiToCall,
                 newPotSize,
                 Number(aiPlayer.stack_size || 0),
+                parseActionHistory(currentGameState.action_history),
               );
 
               await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = 1 AND table_id = ?", args: [table_id] });
@@ -935,6 +984,7 @@ export async function POST(request: Request) {
                   await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = 1 AND table_id = ?", args: [aiBetDiff, aiTargetBet, aiBetDiff, table_id] });
                   await db.execute({ sql: "UPDATE players SET has_acted = 0 WHERE table_id = ? AND status = 'playing' AND fid != 1", args: [table_id] });
                   await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = 1 AND table_id = ?", args: [table_id] });
+                  await appendActionHistory(table_id, "ai", aiDecision.action, aiTargetBet);
 
                   const { rows: activeAfterRaise } = await db.execute({ sql: "SELECT fid FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
                   let aiCurrentIndex = activeAfterRaise.findIndex((r: any) => r.fid === 1);
@@ -945,6 +995,12 @@ export async function POST(request: Request) {
               } else if (aiDecision.action === "call" || aiDecision.action === "check" || aiToCall === 0) {
                  await db.execute({ sql: "UPDATE tables SET pot_size = pot_size + ? WHERE id = ?", args: [Math.max(0, aiToCall), table_id] });
                  await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = 1 AND table_id = ?", args: [Math.max(0, aiToCall), newTableBet, Math.max(0, aiToCall), table_id] });
+                 await appendActionHistory(
+                   table_id,
+                   "ai",
+                   aiToCall > 0 ? "call" : "check",
+                   aiToCall > 0 ? aiToCall : undefined,
+                 );
                   
                  const { rows: activeAfterAI } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
                  const aiStreetOver = activeAfterAI.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
@@ -960,6 +1016,7 @@ export async function POST(request: Request) {
                  }
               } else {
                  await db.execute({ sql: "UPDATE players SET status = 'folded' WHERE fid = 1 AND table_id = ?", args: [table_id]});
+                 await appendActionHistory(table_id, "ai", "fold");
                  const { rows: rem } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id]});
                  if (rem.length === 1) {
                     await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [newPotSize, rem[0].fid, table_id]});
