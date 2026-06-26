@@ -1,0 +1,52 @@
+name: Deploy poker-mini-app to Vercel
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "poker-mini-app/**"
+      - ".github/workflows/deploy-poker-mini-app-vercel.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-poker-mini-app-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: poker-mini-app
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Ensure Vercel token is configured
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::Missing VERCEL_TOKEN secret. Add it at the repository or organization level to enable Vercel deploys."
+            exit 1
+          fi
+
+      - name: Link Vercel project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel link --yes --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN"
+
+      - name: Deploy production build
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel deploy --prod --yes --force --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN"
