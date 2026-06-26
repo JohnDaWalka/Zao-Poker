@@ -1,4 +1,11 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
+
+// This package is ESM ("type": "module" in package.json), so the CommonJS
+// `__dirname` global is not defined here — referencing it crashes config
+// loading on Vercel. Recreate it the ESM-safe way from import.meta.url.
+const projectRoot = dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   typescript: {
@@ -10,7 +17,7 @@ const nextConfig: NextConfig = {
   // of those as the root instead, then fail to find `src/app` at all.
   // Pin it explicitly so the build is never ambiguous.
   turbopack: {
-    root: __dirname,
+    root: projectRoot,
   },
 };
 
