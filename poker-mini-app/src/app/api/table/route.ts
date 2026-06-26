@@ -376,7 +376,7 @@ export async function GET(request: Request) {
       }
 
       const { rows: players } = await db.execute({
-        sql: "SELECT fid, username, pfp_url, stack_size, hand, current_bet, status FROM players WHERE table_id = ?",
+        sql: "SELECT fid, username, pfp_url, stack_size, hand, current_bet, status, seat_index FROM players WHERE table_id = ? ORDER BY seat_index ASC",
         args: [tableId]
       });
 
@@ -770,7 +770,7 @@ export async function POST(request: Request) {
     );
 
     const { rows: players } = await db.execute({
-      sql: "SELECT fid, username, pfp_url, stack_size, hand, current_bet, status FROM players WHERE table_id = ?",
+      sql: "SELECT fid, username, pfp_url, stack_size, hand, current_bet, status, seat_index FROM players WHERE table_id = ? ORDER BY seat_index ASC",
       args: [table_id]
     });
 

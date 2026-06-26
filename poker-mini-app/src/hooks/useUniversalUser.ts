@@ -66,6 +66,7 @@ export function useUniversalUser(): UniversalUser {
 
     if (farcasterFid) {
       return {
+        id: `fid:${farcasterFid}`,
         fid: farcasterFid,
         username: neynarUser?.username ?? `User#${farcasterFid}`,
         displayName: neynarUser?.username ?? `User#${farcasterFid}`,
@@ -79,6 +80,7 @@ export function useUniversalUser(): UniversalUser {
 
     if (wallet.isConnected && wallet.address) {
       return {
+        id: `wallet:evm:${wallet.address.toLowerCase()}`,
         fid: pseudoFidFromString(`evm:${wallet.address.toLowerCase()}`),
         username: shortAddress(wallet.address),
         displayName: shortAddress(wallet.address),
@@ -90,6 +92,7 @@ export function useUniversalUser(): UniversalUser {
     }
 
     return {
+      id: `guest:${guestId}`,
       fid: pseudoFidFromString(`guest:${guestId}`),
       username: "Guest",
       displayName:

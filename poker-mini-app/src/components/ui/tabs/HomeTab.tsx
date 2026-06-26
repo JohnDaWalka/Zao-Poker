@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { UniversalConnectBar } from "~/components/ui/UniversalConnectBar";
+import { useRenderLobby } from "~/hooks/useRenderLobby";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
 
 // Helper to convert card string (e.g. "Ah") to display components
@@ -31,6 +33,7 @@ export function HomeTab() {
   // wallets outside Farcaster get a stable per-user identity instead of all
   // colliding on a single shared placeholder fid.
   const universalUser = useUniversalUser();
+  const renderLobby = useRenderLobby();
 
   // Navigation states
   const [gameState, setGameState] = useState<"lobby" | "table">("lobby");
@@ -294,6 +297,31 @@ export function HomeTab() {
   };
 
   const toCall = currentBet - playerCurrentBet;
+  const showRenderLobbyStatus =
+    renderLobby.status !== "disabled" && renderLobby.status !== "connected";
+  const renderLobbyStatusLabel =
+    renderLobby.status === "connecting"
+      ? "Connecting to Render lobby..."
+      : "Reconnecting Render lobby...";
+
+  const runtimeChrome = (
+    <>
+      <UniversalConnectBar />
+      {showRenderLobbyStatus && (
+        <div className="glass-panel border-yellow-500/25 bg-yellow-950/20 px-4 py-3 text-sm text-yellow-200">
+          {renderLobbyStatusLabel}
+        </div>
+      )}
+      {renderLobby.error && (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-200"
+        >
+          {renderLobby.error}
+        </div>
+      )}
+    </>
+  );
 
   // LOBBY VIEW
   if (gameState === "lobby") {
@@ -307,6 +335,7 @@ export function HomeTab() {
         </header>
 
         <div className="flex-1 flex flex-col space-y-4 max-w-md mx-auto w-full">
+          {runtimeChrome}
           {joinError && (
             <div role="alert" className="rounded-lg border border-red-800 bg-red-950/60 px-4 py-3 text-sm text-red-200">
               {joinError}
@@ -391,7 +420,9 @@ export function HomeTab() {
           <p className="text-sm text-neon-gold font-semibold">{tableName}</p>
         </header>
 
-        <div className="glass-panel my-auto max-w-md mx-auto w-full p-4">
+        <div className="my-auto max-w-md mx-auto w-full space-y-4">
+          {runtimeChrome}
+          <div className="glass-panel w-full p-4">
           <h3 className="text-sm font-semibold tracking-wider text-gray-500 uppercase mb-4 text-center">
             Seated Players ({seatedPlayers.length}/{maxPlayers})
           </h3>
@@ -445,6 +476,7 @@ export function HomeTab() {
               Leave Room
             </button>
           </div>
+          </div>
         </div>
 
         <footer className="text-center text-xs text-gray-600 py-2">
@@ -460,6 +492,9 @@ export function HomeTab() {
       <div className="absolute inset-0 bg-black bg-opacity-60 z-0 pointer-events-none"></div>
       
       <div className="z-10 flex flex-col items-center justify-between h-full p-4 overflow-y-auto">
+        <div className="w-full max-w-md shrink-0 mb-3">
+          {runtimeChrome}
+        </div>
         
         {/* Header bar */}
         <div className="flex justify-between items-center w-full max-w-md shrink-0">

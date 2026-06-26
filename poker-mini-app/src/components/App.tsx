@@ -8,6 +8,7 @@ import { HomeTab, DashboardTab, HandAnalysisTab, LeaderboardsTab, AnalyticsTab, 
 import { USE_WALLET } from "~/lib/constants";
 import { useNeynarUser } from "../hooks/useNeynarUser";
 import { useRuntimeHost } from "~/hooks/useRuntimeHost";
+import { useMiniAppReady } from "~/hooks/useMiniAppReady";
 import { Tab } from "~/lib/tabs";
 
 // Re-exported so existing importers of `Tab` from this module keep working.
@@ -59,6 +60,8 @@ export default function App(
   { title }: AppProps = { title: "LeakSnipe Poker" }
 ) {
   // --- Hooks ---
+  useMiniAppReady();
+
   const {
     isSDKLoaded,
     context,
@@ -140,4 +143,3 @@ export default function App(
     </div>
   );
 }
-

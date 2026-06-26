@@ -8,6 +8,7 @@ export type ChainAdapter = {
   getAddress: () => Promise<string | null>;
   getChainId?: () => Promise<number | string | null>;
   signMessage?: (message: string) => Promise<string>;
+  sendTransaction?: (tx: unknown) => Promise<string>;
 };
 
 const adapterRegistry = new Map<ChainNamespace, ChainAdapter>();

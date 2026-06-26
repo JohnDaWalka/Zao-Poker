@@ -15,7 +15,10 @@ function warnIfMissing(scope: string, vars: Record<string, string | undefined>) 
 
 export function getPublicEnv() {
   const vars = {
-    NEXT_PUBLIC_URL: process.env.NEXT_PUBLIC_URL,
+    NEXT_PUBLIC_APP_URL:
+      process.env.NEXT_PUBLIC_APP_URL ?? process.env.NEXT_PUBLIC_URL,
+    NEXT_PUBLIC_RENDER_API_URL: process.env.NEXT_PUBLIC_RENDER_API_URL,
+    NEXT_PUBLIC_RENDER_WS_URL: process.env.NEXT_PUBLIC_RENDER_WS_URL,
     NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:
       process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID,
     NEXT_PUBLIC_PRIVY_APP_ID: process.env.NEXT_PUBLIC_PRIVY_APP_ID,
@@ -23,10 +26,27 @@ export function getPublicEnv() {
     NEXT_PUBLIC_ZERODEV_PAYMASTER_RPC: process.env.NEXT_PUBLIC_ZERODEV_PAYMASTER_RPC,
   };
 
-  warnIfMissing("public", vars);
+  warnIfMissing("public", {
+    NEXT_PUBLIC_APP_URL: vars.NEXT_PUBLIC_APP_URL,
+  });
+
+  if (
+    process.env.NODE_ENV === "production" &&
+    (vars.NEXT_PUBLIC_RENDER_API_URL || vars.NEXT_PUBLIC_RENDER_WS_URL) &&
+    (!vars.NEXT_PUBLIC_RENDER_API_URL || !vars.NEXT_PUBLIC_RENDER_WS_URL)
+  ) {
+    console.warn(
+      "[env] Render lobby is partially configured. Set both NEXT_PUBLIC_RENDER_API_URL and NEXT_PUBLIC_RENDER_WS_URL."
+    );
+  }
 
   return {
-    appUrl: vars.NEXT_PUBLIC_URL ?? "http://localhost:3000",
+    appUrl: vars.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+    renderApiUrl: vars.NEXT_PUBLIC_RENDER_API_URL ?? "",
+    renderWsUrl: vars.NEXT_PUBLIC_RENDER_WS_URL ?? "",
+    hasRenderLobby: Boolean(
+      vars.NEXT_PUBLIC_RENDER_API_URL && vars.NEXT_PUBLIC_RENDER_WS_URL
+    ),
     // Empty string (rather than undefined) lets callers do a simple truthy
     // check to decide whether the WalletConnect connector can be enabled.
     walletConnectProjectId: vars.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",

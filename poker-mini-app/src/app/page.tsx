@@ -1,5 +1,6 @@
 import { Metadata } from "next";
-import App from "./app";
+import "../components/leaksnipe-ui.css";
+import LeakSnipeUniversalUI from "~/components/LeakSnipeUniversalUI";
 import { APP_NAME, APP_DESCRIPTION, APP_OG_IMAGE_URL } from "~/lib/constants";
 import { getMiniAppEmbedMetadata } from "~/lib/utils";
 
@@ -20,5 +21,5 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default function Home() {
-  return (<App />);
+  return <LeakSnipeUniversalUI />;
 }
