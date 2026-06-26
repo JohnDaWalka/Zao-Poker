@@ -968,26 +968,6 @@
   backdrop-filter: blur(20px);
 }
 
-.ls-table-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.ls-card-strip-panel {
-  display: grid;
-  gap: 12px;
-  padding: 20px;
-  border-radius: var(--ls-radius-lg);
-  border: 1px solid var(--ls-border);
-  background:
-    linear-gradient(160deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
-    var(--ls-card);
-  box-shadow:
-    var(--ls-shadow),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
 .ls-card-strip-header {
   display: flex;
   align-items: baseline;
@@ -1008,6 +988,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  justify-content: center;
 }
 
 .ls-playing-card {
@@ -1026,6 +1007,95 @@
 
 .ls-playing-card.red {
   color: #dc2626;
+}
+
+.ls-playing-card-compact {
+  width: 34px;
+  height: 48px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+
+.ls-playing-card-hero {
+  width: 58px;
+  height: 80px;
+  font-size: 24px;
+}
+
+.ls-board-area {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  transform: translate(-50%, -50%);
+  width: min(100%, 360px);
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 18px 20px 20px;
+  border-radius: 28px;
+  background: rgba(2, 6, 12, 0.56);
+  border: 1px solid rgba(27, 220, 255, 0.16);
+  box-shadow: 0 0 36px rgba(27, 220, 255, 0.1);
+}
+
+.ls-board-area .ls-card-strip-header {
+  width: 100%;
+}
+
+.ls-pot-pill {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(246, 189, 75, 0.16);
+  border: 1px solid rgba(246, 189, 75, 0.22);
+  color: var(--ls-gold);
+  font-weight: 800;
+}
+
+.ls-hero-hand {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  width: min(100% - 32px, 320px);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-radius: 24px;
+  background: rgba(2, 6, 12, 0.72);
+  border: 1px solid rgba(32, 240, 189, 0.22);
+  box-shadow: 0 0 24px rgba(32, 240, 189, 0.14);
+}
+
+.ls-hero-hand .ls-card-strip-header {
+  width: 100%;
+}
+
+.ls-opponent-hand {
+  position: absolute;
+  top: 88px;
+  display: flex;
+  gap: 8px;
+}
+
+.ls-opponent-hand-1 {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.ls-opponent-hand-2 {
+  right: 180px;
+}
+
+.ls-card-back {
+  width: 34px;
+  height: 48px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.1), transparent 32%),
+    linear-gradient(145deg, #4c0c18, #22050b 70%);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
 }
 
 .ls-action-panel-header {
@@ -1646,8 +1716,41 @@
     grid-template-columns: 1fr;
   }
 
-  .ls-table-cards-grid {
-    grid-template-columns: 1fr;
+  .ls-board-area {
+    top: 56%;
+    width: min(100% - 28px, 320px);
+    padding: 14px 16px 16px;
+  }
+
+  .ls-playing-card {
+    width: 44px;
+    height: 62px;
+    font-size: 18px;
+  }
+
+  .ls-playing-card-compact {
+    width: 28px;
+    height: 40px;
+    font-size: 12px;
+  }
+
+  .ls-playing-card-hero {
+    width: 52px;
+    height: 72px;
+    font-size: 22px;
+  }
+
+  .ls-hero-hand {
+    width: min(100% - 20px, 280px);
+    bottom: 18px;
+  }
+
+  .ls-opponent-hand {
+    top: 76px;
+  }
+
+  .ls-opponent-hand-2 {
+    right: 24px;
   }
 
   .ls-club-grid {

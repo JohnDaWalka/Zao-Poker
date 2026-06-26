@@ -1264,6 +1264,7 @@ function TableView({
   const canAct = Boolean(currentSeat) && table.status === "in_game" && isPlayersTurn;
   const isShowdown = table.phase === "showdown";
   const heroCards = currentSeat?.holeCards ?? [];
+  const opponentSeats = table.seats.filter((seat) => seat.user && seat.user.fid !== userFid);
 
   const visibleMessages = useMemo(
     () => chat.messages.filter((message) => !chat.mutedFids.includes(message.fid)),
@@ -1413,6 +1414,60 @@ function TableView({
           </small>
         </div>
 
+        <div className="ls-board-area">
+          <div className="ls-card-strip-header">
+            <strong>Board</strong>
+            <small>{table.phase === "preflop" ? "Waiting for flop" : table.phase}</small>
+          </div>
+          {table.board.length === 0 ? (
+            <div className="ls-card-strip-empty">No community cards yet.</div>
+          ) : (
+            <div className="ls-playing-cards-row">
+              {table.board.map((card, index) => {
+                const { rank, suitSymbol, isRed } = getCardDisplay(card);
+                return (
+                  <div
+                    key={`${card}-${index}`}
+                    className={isRed ? "ls-playing-card" + " red" : "ls-playing-card"}
+                  >
+                    {rank}
+                    {suitSymbol}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="ls-pot-pill">Pot {formatCurrency(table.potSize)}</div>
+        </div>
+
+        {opponentSeats.slice(0, 2).map((seat, index) => (
+          <div
+            key={`opponent-cards-${seat.seatNumber}`}
+            className={`ls-opponent-hand ls-opponent-hand-${index + 1}`}
+          >
+            {seat.holeCards.length > 0 ? (
+              seat.holeCards.map((card, cardIndex) => {
+                if (!isShowdown) {
+                  return <div key={`${seat.seatNumber}-${cardIndex}`} className="ls-card-back" />;
+                }
+
+                const { rank, suitSymbol, isRed } = getCardDisplay(card);
+                return (
+                  <div
+                    key={`${seat.seatNumber}-${cardIndex}`}
+                    className={isRed ? "ls-playing-card ls-playing-card-compact red" : "ls-playing-card ls-playing-card-compact"}
+                  >
+                    {rank}
+                    {suitSymbol}
+                  </div>
+                );
+              })
+            ) : (
+              <span className="ls-card-strip-empty">Waiting</span>
+            )}
+          </div>
+        ))}
+
         {table.seats.map((seat) => (
           <div key={seat.seatNumber} className={`ls-seat ls-seat-${seat.seatNumber}`}>
             <div className={seat.user ? "ls-seat-avatar filled" : "ls-seat-avatar"}>
@@ -1438,35 +1493,7 @@ function TableView({
             </small>
           </div>
         ))}
-      </section>
-
-      <section className="ls-table-cards-grid">
-        <article className="ls-card-strip-panel">
-          <div className="ls-card-strip-header">
-            <strong>Board</strong>
-            <small>{table.phase === "preflop" ? "Waiting for flop" : table.phase}</small>
-          </div>
-          {table.board.length === 0 ? (
-            <div className="ls-card-strip-empty">No community cards yet.</div>
-          ) : (
-            <div className="ls-playing-cards-row">
-              {table.board.map((card, index) => {
-                const { rank, suitSymbol, isRed } = getCardDisplay(card);
-                return (
-                  <div
-                    key={`${card}-${index}`}
-                    className={isRed ? "ls-playing-card red" : "ls-playing-card"}
-                  >
-                    {rank}
-                    {suitSymbol}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </article>
-
-        <article className="ls-card-strip-panel">
+        <div className="ls-hero-hand">
           <div className="ls-card-strip-header">
             <strong>Your hand</strong>
             <small>{currentSeat ? `${formatCurrency(currentStack)} stack` : "Take a seat to get dealt in."}</small>
@@ -1482,7 +1509,7 @@ function TableView({
                 return (
                   <div
                     key={`${card}-${index}`}
-                    className={isRed ? "ls-playing-card red" : "ls-playing-card"}
+                    className={isRed ? "ls-playing-card ls-playing-card-hero red" : "ls-playing-card ls-playing-card-hero"}
                   >
                     {rank}
                     {suitSymbol}
@@ -1491,7 +1518,7 @@ function TableView({
               })}
             </div>
           )}
-        </article>
+        </div>
       </section>
 
       <section className="ls-table-info-grid">
