@@ -24,3 +24,5 @@ build/
 out/
 .npm
 .eslintcache
+.vercel
+.env*
