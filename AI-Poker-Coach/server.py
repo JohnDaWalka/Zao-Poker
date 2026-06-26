@@ -33,9 +33,10 @@ elif not default_provider and os.getenv("GROK_API_KEY"):
 if default_provider:
     try:
         processor.set_default_provider(default_provider)
-        print(f"[startup] LLM provider: {default_provider}")
+        print(f"[startup] LLM provider configured: {default_provider}")
     except ValueError as e:
-        print(f"[startup] FATAL: {e}", file=sys.stderr)
+        print(f"[startup] FATAL ERROR: Invalid LLM provider '{default_provider}'", file=sys.stderr)
+        print("[startup] Supported providers: local, openai, grok, asi1", file=sys.stderr)
         sys.exit(1)
 
 
@@ -51,13 +52,22 @@ class HandAction(BaseModel):
     @classmethod
     def validate_cards(cls, value: list[str]) -> list[str]:
         if len(value) not in (2, 4, 5, 6, 7):
-            raise ValueError("cards must be 2 hole + 0-5 board")
+            raise ValueError("cards must be 2 hole cards + 0-5 board cards (total 2-7)")
 
-        valid_card = re.compile(r"^[2-9TJQKA][shdc]$")
+        valid_card = re.compile(r"^[2-9TJQKA][shdc]$", re.IGNORECASE)
         for card in value:
             if not valid_card.match(card):
-                raise ValueError(f"Invalid card: {card!r}")
+                raise ValueError(
+                    f"Invalid card format: {card!r}. Use format: rank+suit (e.g., 'As', 'Kh')"
+                )
 
+        return value
+
+    @field_validator("pot_size", "stack_size", "amount")
+    @classmethod
+    def validate_positive(cls, value: Optional[float]) -> Optional[float]:
+        if value is not None and value < 0:
+            raise ValueError("Amount must be non-negative")
         return value
 
 @app.post("/api/analyze_action")

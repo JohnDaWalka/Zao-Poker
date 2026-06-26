@@ -244,7 +244,7 @@ def hero_vs_random_opponent(
     Convenience helper for API callers that only know the hero's exact hand.
     """
     if len(hero_cards) != 2:
-        return {'error': 'hero_cards must contain exactly 2 cards'}
+        return {"error": "hero_cards must be exactly 2 cards"}
 
     hero_combo = "".join(hero_cards)
     result = calculate_equity_fast([hero_combo], parse_range("random"), board_strs, trials)
