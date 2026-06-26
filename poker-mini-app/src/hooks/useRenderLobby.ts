@@ -83,6 +83,12 @@ type CurrentApiPlayer = {
   is_bot?: number;
 };
 
+type CurrentApiTableDetailResponse = {
+  success?: boolean;
+  gameState?: CurrentApiLobbyTable;
+  players?: CurrentApiPlayer[];
+};
+
 const env = getPublicEnv();
 
 function mapStatus(
@@ -185,6 +191,8 @@ function mapCurrentApiTable(
 
 export function useRenderLobby(currentUser?: UniversalUser) {
   const wsRef = useRef<WebSocket | null>(null);
+  const stateVersionRef = useRef(0);
+  const appliedStateVersionRef = useRef(0);
   const [state, setState] = useState<LobbyState>({
     tables: [],
     updatedAt: Date.now(),
@@ -201,7 +209,65 @@ export function useRenderLobby(currentUser?: UniversalUser) {
   const currentFid =
     currentUser && Number.isSafeInteger(currentUser.fid) ? Number(currentUser.fid) : null;
 
+  const applySnapshot = useCallback((tables: PokerTable[], version: number) => {
+    if (version < appliedStateVersionRef.current) {
+      return false;
+    }
+
+    appliedStateVersionRef.current = version;
+    setState({
+      tables,
+      updatedAt: Date.now(),
+    });
+    setStatus("connected");
+    setError(null);
+    return true;
+  }, []);
+
+  const mapTableDetail = useCallback((detail: CurrentApiTableDetailResponse) => {
+    if (!detail.gameState) {
+      return null;
+    }
+
+    return mapCurrentApiTable(detail.gameState, detail.players ?? []);
+  }, []);
+
+  const applyTableDetail = useCallback(
+    (detail: CurrentApiTableDetailResponse) => {
+      const mappedTable = mapTableDetail(detail);
+      if (!mappedTable) {
+        return false;
+      }
+
+      const version = ++stateVersionRef.current;
+      appliedStateVersionRef.current = version;
+      setState((current) => {
+        const existingIndex = current.tables.findIndex((table) => table.id === mappedTable.id);
+
+        if (existingIndex === -1) {
+          return {
+            tables: [mappedTable, ...current.tables],
+            updatedAt: Date.now(),
+          };
+        }
+
+        const nextTables = [...current.tables];
+        nextTables[existingIndex] = mappedTable;
+        return {
+          tables: nextTables,
+          updatedAt: Date.now(),
+        };
+      });
+      setStatus("connected");
+      setError(null);
+      return true;
+    },
+    [mapTableDetail],
+  );
+
   const refreshCurrentApiLobby = useCallback(async () => {
+    const version = ++stateVersionRef.current;
+
     try {
       const response = await fetch(
         currentFid !== null
@@ -242,13 +308,12 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         })
       );
 
-      setState({
-        tables: detailedTables,
-        updatedAt: Date.now(),
-      });
-      setStatus("connected");
-      setError(null);
+      applySnapshot(detailedTables, version);
     } catch (caughtError) {
+      if (version < appliedStateVersionRef.current) {
+        return;
+      }
+
       setStatus("disconnected");
       setError(
         caughtError instanceof Error
@@ -256,7 +321,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           : "Unable to reach the lobby."
       );
     }
-  }, [currentFid]);
+  }, [applySnapshot, currentFid]);
 
   useEffect(() => {
     if (!env.hasRenderLobby || !wsUrl) {
@@ -380,7 +445,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           throw new Error(data.error || "Unable to join this table.");
         }
 
-        await refreshCurrentApiLobby();
+        applyTableDetail(data as CurrentApiTableDetailResponse);
         return true;
       } catch (caughtError) {
         setError(
@@ -391,7 +456,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         return false;
       }
     },
-    [refreshCurrentApiLobby, send]
+    [applyTableDetail, send]
   );
 
   const leaveTable = useCallback(
@@ -417,7 +482,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           throw new Error(data.error || "Unable to leave this table.");
         }
 
-        await refreshCurrentApiLobby();
+        applyTableDetail(data as CurrentApiTableDetailResponse);
       } catch (caughtError) {
         setError(
           caughtError instanceof Error
@@ -426,7 +491,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         );
       }
     },
-    [refreshCurrentApiLobby, send]
+    [applyTableDetail, send]
   );
 
   const createTable = useCallback(
@@ -461,7 +526,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           throw new Error(data.error || "Unable to create this table.");
         }
 
-        await refreshCurrentApiLobby();
+        applyTableDetail(data as CurrentApiTableDetailResponse);
       } catch (caughtError) {
         setError(
           caughtError instanceof Error
@@ -470,7 +535,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         );
       }
     },
-    [refreshCurrentApiLobby, send]
+    [applyTableDetail, send]
   );
 
   const toggleReady = useCallback(
@@ -496,7 +561,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           throw new Error(data.error || "Unable to update ready state.");
         }
 
-        await refreshCurrentApiLobby();
+        applyTableDetail(data as CurrentApiTableDetailResponse);
         return true;
       } catch (caughtError) {
         setError(
@@ -507,7 +572,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         return false;
       }
     },
-    [refreshCurrentApiLobby, send]
+    [applyTableDetail, send]
   );
 
   const takeTableAction = useCallback(
@@ -539,7 +604,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           throw new Error(data.error || "Unable to play this action.");
         }
 
-        await refreshCurrentApiLobby();
+        applyTableDetail(data as CurrentApiTableDetailResponse);
         return true;
       } catch (caughtError) {
         setError(
@@ -550,7 +615,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         return false;
       }
     },
-    [refreshCurrentApiLobby, send],
+    [applyTableDetail, send],
   );
 
   const dealTableHand = useCallback(
@@ -576,7 +641,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           throw new Error(data.error || "Unable to start the next hand.");
         }
 
-        await refreshCurrentApiLobby();
+        applyTableDetail(data as CurrentApiTableDetailResponse);
         return true;
       } catch (caughtError) {
         setError(
@@ -587,7 +652,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         return false;
       }
     },
-    [refreshCurrentApiLobby, send],
+    [applyTableDetail, send],
   );
 
   return {

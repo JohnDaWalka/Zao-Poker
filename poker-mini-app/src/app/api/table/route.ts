@@ -746,6 +746,35 @@ async function getTableSnapshot(tableId: string) {
   };
 }
 
+async function maybeAutoDealPracticeHand(tableId: string) {
+  if (tableId !== "room_1") {
+    return false;
+  }
+
+  const snapshot = await getTableSnapshot(tableId);
+  if (!snapshot) {
+    return false;
+  }
+
+  const { tableState, players } = snapshot;
+  if (String(tableState.phase || "") !== "showdown" || !hasHumanAndBot(players)) {
+    return false;
+  }
+
+  const eligibleFids = players
+    .filter((player: any) => Number(player.stack_size || 0) > 0)
+    .map((player: any) => Number(player.fid));
+
+  if (eligibleFids.length < 2) {
+    return false;
+  }
+
+  await refreshAutoplayStartTime(tableId, players);
+  await dealNewHand(tableId, eligibleFids);
+  await runAutoplayUntilHuman(tableId, AUTOPLAY_MAX_TURNS);
+  return true;
+}
+
 async function buildTableResponse(tableId: string) {
   const snapshot = await getTableSnapshot(tableId);
   if (!snapshot) {
@@ -917,6 +946,7 @@ export async function GET(request: Request) {
       }
 
       await runAutoplayUntilHuman(tableId, AUTOPLAY_MAX_TURNS);
+      await maybeAutoDealPracticeHand(tableId);
 
       const response = await buildTableResponse(tableId);
       if (!response) {
@@ -1447,6 +1477,7 @@ export async function POST(request: Request) {
 
     await ensureAutoplayBot(effectiveTableId);
     await runAutoplayUntilHuman(effectiveTableId, AUTOPLAY_MAX_TURNS);
+    await maybeAutoDealPracticeHand(effectiveTableId);
     const response = await buildTableResponse(effectiveTableId);
     if (!response) {
       return NextResponse.json(
