@@ -357,7 +357,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     async (tableId: string, user: UniversalUser) => {
       if (env.hasRenderLobby) {
         send({ type: "join_table", payload: { tableId, user } });
-        return;
+        return true;
       }
 
       try {
@@ -379,12 +379,14 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         }
 
         await refreshCurrentApiLobby();
+        return true;
       } catch (caughtError) {
         setError(
           caughtError instanceof Error
             ? caughtError.message
             : "Unable to join this table."
         );
+        return false;
       }
     },
     [refreshCurrentApiLobby, send]
@@ -473,7 +475,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     async (tableId: string, user: UniversalUser) => {
       if (env.hasRenderLobby) {
         send({ type: "toggle_ready", payload: { tableId, user } });
-        return;
+        return true;
       }
 
       try {
@@ -493,15 +495,97 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         }
 
         await refreshCurrentApiLobby();
+        return true;
       } catch (caughtError) {
         setError(
           caughtError instanceof Error
             ? caughtError.message
             : "Unable to update ready state."
         );
+        return false;
       }
     },
     [refreshCurrentApiLobby, send]
+  );
+
+  const takeTableAction = useCallback(
+    async (
+      tableId: string,
+      user: UniversalUser,
+      action: "fold" | "check" | "call" | "bet" | "raise" | "all_in",
+      amount = 0,
+    ) => {
+      if (env.hasRenderLobby) {
+        setError("Live hand actions currently require the direct API mode.");
+        return false;
+      }
+
+      try {
+        const response = await fetch("/api/table", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fid: user.fid,
+            table_id: tableId,
+            action,
+            amount,
+          }),
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Unable to play this action.");
+        }
+
+        await refreshCurrentApiLobby();
+        return true;
+      } catch (caughtError) {
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Unable to play this action.",
+        );
+        return false;
+      }
+    },
+    [refreshCurrentApiLobby, send],
+  );
+
+  const dealTableHand = useCallback(
+    async (tableId: string, user: UniversalUser) => {
+      if (env.hasRenderLobby) {
+        setError("Starting the next hand currently requires the direct API mode.");
+        return false;
+      }
+
+      try {
+        const response = await fetch("/api/table", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fid: user.fid,
+            table_id: tableId,
+            action: "deal",
+          }),
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Unable to start the next hand.");
+        }
+
+        await refreshCurrentApiLobby();
+        return true;
+      } catch (caughtError) {
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Unable to start the next hand.",
+        );
+        return false;
+      }
+    },
+    [refreshCurrentApiLobby, send],
   );
 
   return {
@@ -515,6 +599,8 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     joinTable,
     leaveTable,
     toggleReady,
+    takeTableAction,
+    dealTableHand,
     refresh: refreshCurrentApiLobby,
   };
 }

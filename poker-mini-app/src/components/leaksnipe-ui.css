@@ -953,6 +953,47 @@
   backdrop-filter: blur(20px);
 }
 
+.ls-action-panel {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border-radius: var(--ls-radius-lg);
+  border: 1px solid var(--ls-border);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
+    var(--ls-card);
+  box-shadow:
+    var(--ls-shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(20px);
+}
+
+.ls-action-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ls-action-panel-header h3 {
+  margin: 6px 0 0;
+  font-size: 24px;
+}
+
+.ls-action-panel-header small {
+  color: var(--ls-muted);
+}
+
+.ls-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ls-action-grid-compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .ls-chat-header {
   display: flex;
   align-items: flex-start;
@@ -1617,6 +1658,10 @@
     grid-template-columns: 1fr;
   }
 
+  .ls-action-panel-header {
+    flex-direction: column;
+  }
+
   .ls-solver-grid,
   .ls-solver-recommendations {
     grid-template-columns: 1fr;
@@ -1708,6 +1753,11 @@
 
   .ls-table-info-grid,
   .ls-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ls-action-grid,
+  .ls-action-grid-compact {
     grid-template-columns: 1fr;
   }
 

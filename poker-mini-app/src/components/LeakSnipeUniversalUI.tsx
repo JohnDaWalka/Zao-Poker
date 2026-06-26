@@ -225,9 +225,9 @@ export default function LeakSnipeUniversalUI() {
 
   const seatedTable = useMemo(() => {
     return tables.find((table) =>
-      table.seats.some((seat) => seat.user?.id === user.id)
+      table.seats.some((seat) => seat.user?.fid === user.fid)
     );
-  }, [tables, user.id]);
+  }, [tables, user.fid]);
 
   const selectedClub = useMemo(
     () => {
@@ -310,8 +310,11 @@ export default function LeakSnipeUniversalUI() {
     await clubs.reviewReport(selectedClubId, reportId, status);
   }
 
-  function joinTable(table: PokerTable) {
-    void lobby.joinTable(table.id, user);
+  async function joinTable(table: PokerTable) {
+    const joined = await lobby.joinTable(table.id, user);
+    if (!joined) {
+      return;
+    }
     setActiveTableId(table.id);
     setActiveTab("table");
   }
@@ -322,6 +325,18 @@ export default function LeakSnipeUniversalUI() {
 
   function toggleReady(table: PokerTable) {
     void lobby.toggleReady(table.id, user);
+  }
+
+  async function playTableAction(
+    table: PokerTable,
+    action: "fold" | "check" | "call" | "bet" | "raise" | "all_in",
+    amount?: number,
+  ) {
+    await lobby.takeTableAction(table.id, user, action, amount ?? 0);
+  }
+
+  async function dealNextHand(table: PokerTable) {
+    await lobby.dealTableHand(table.id, user);
   }
 
   return (
@@ -482,11 +497,13 @@ export default function LeakSnipeUniversalUI() {
             <TableView
               table={activeTable}
               user={user}
-              userId={user.id}
+              userFid={user.fid}
               supportsReadyState={lobby.supportsReadyState}
               onJoin={() => joinTable(activeTable)}
               onLeave={() => leaveTable(activeTable)}
               onReady={() => toggleReady(activeTable)}
+              onAction={(action, amount) => playTableAction(activeTable, action, amount)}
+              onDealNextHand={() => dealNextHand(activeTable)}
             />
           )}
 
@@ -497,7 +514,7 @@ export default function LeakSnipeUniversalUI() {
               analytics={productData.analytics}
               hands={productData.hands}
               table={activeTable}
-              userId={user.id}
+              userFid={user.fid}
             />
           )}
 
@@ -1194,27 +1211,42 @@ function SeatDots({ table }: { table: PokerTable }) {
 function TableView({
   table,
   user,
-  userId,
+  userFid,
   supportsReadyState,
   onJoin,
   onLeave,
   onReady,
+  onAction,
+  onDealNextHand,
 }: {
   table: PokerTable;
   user: ReturnType<typeof useUniversalUser>;
-  userId: string;
+  userFid: number;
   supportsReadyState: boolean;
   onJoin: () => void;
   onLeave: () => void;
   onReady: () => void;
+  onAction: (
+    action: "fold" | "check" | "call" | "bet" | "raise" | "all_in",
+    amount?: number,
+  ) => Promise<void>;
+  onDealNextHand: () => Promise<void>;
 }) {
-  const currentSeat = table.seats.find((seat) => seat.user?.id === userId);
+  const currentSeat = table.seats.find((seat) => seat.user?.fid === userFid);
   const occupied = occupiedSeats(table);
   const readyCount = table.seats.filter((seat) => seat.user && seat.isReady).length;
   const isFull = occupied >= table.maxPlayers;
   const chat = useTableChat(table.id, user.fid);
   const [draftMessage, setDraftMessage] = useState("");
   const [reportedMessageIds, setReportedMessageIds] = useState<number[]>([]);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const toCall = Math.max(0, table.currentBet - Number(currentSeat?.currentBet || 0));
+  const currentStack = Number(currentSeat?.stack || 0);
+  const isPlayersTurn = table.currentTurnFid === userFid;
+  const canAct = Boolean(currentSeat) && table.status === "in_game" && isPlayersTurn;
+  const isShowdown = table.phase === "showdown";
 
   const visibleMessages = useMemo(
     () => chat.messages.filter((message) => !chat.mutedFids.includes(message.fid)),
@@ -1270,6 +1302,37 @@ function TableView({
     }
   }
 
+  async function submitAction(
+    action: "fold" | "check" | "call" | "bet" | "raise" | "all_in",
+    amount?: number,
+  ) {
+    try {
+      setActionLoading(action);
+      setActionError(null);
+      await onAction(action, amount);
+    } catch (caughtError) {
+      setActionError(
+        caughtError instanceof Error ? caughtError.message : "Unable to play this action.",
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function submitNextHand() {
+    try {
+      setActionLoading("deal");
+      setActionError(null);
+      await onDealNextHand();
+    } catch (caughtError) {
+      setActionError(
+        caughtError instanceof Error ? caughtError.message : "Unable to start the next hand.",
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   return (
     <div className="ls-view">
       <div className="ls-view-header">
@@ -1295,7 +1358,12 @@ function TableView({
           )}
 
           {currentSeat && supportsReadyState && (
-            <button className="ls-secondary-button" onClick={onReady} type="button">
+            <button
+              className="ls-secondary-button"
+              disabled={table.status === "in_game"}
+              onClick={onReady}
+              type="button"
+            >
               {currentSeat.isReady ? "Unready" : "Ready"}
             </button>
           )}
@@ -1361,6 +1429,139 @@ function TableView({
         <InfoTile label="Buy-in" value={formatCurrency(table.buyIn)} />
         <InfoTile label="Status" value={getStatusLabel(table.status)} />
       </section>
+
+      {currentSeat && (
+        <section className="ls-action-panel">
+          <div className="ls-action-panel-header">
+            <div>
+              <p className="ls-eyebrow">Live Hand Controls</p>
+              <h3>{isShowdown ? "Hand complete" : isPlayersTurn ? "Your turn" : "Waiting on action"}</h3>
+            </div>
+            <small>
+              {isShowdown
+                ? "Start the next hand when you are ready."
+                : `To call ${formatCurrency(toCall)} · Stack ${formatCurrency(currentStack)}`}
+            </small>
+          </div>
+
+          {isShowdown ? (
+            <button
+              className="ls-primary-button"
+              disabled={actionLoading === "deal"}
+              onClick={() => void submitNextHand()}
+              type="button"
+            >
+              {actionLoading === "deal" ? "Starting…" : "Start Next Hand"}
+            </button>
+          ) : canAct ? (
+            <>
+              <div className="ls-action-grid">
+                <button
+                  className="ls-danger-button"
+                  disabled={actionLoading !== null}
+                  onClick={() => void submitAction("fold")}
+                  type="button"
+                >
+                  Fold
+                </button>
+                {toCall === 0 ? (
+                  <button
+                    className="ls-secondary-button"
+                    disabled={actionLoading !== null}
+                    onClick={() => void submitAction("check")}
+                    type="button"
+                  >
+                    Check
+                  </button>
+                ) : (
+                  <button
+                    className="ls-primary-button"
+                    disabled={actionLoading !== null}
+                    onClick={() => void submitAction("call", toCall)}
+                    type="button"
+                  >
+                    Call {formatCurrency(toCall)}
+                  </button>
+                )}
+              </div>
+
+              <div className="ls-action-grid ls-action-grid-compact">
+                {toCall === 0 ? (
+                  <>
+                    <button
+                      className="ls-secondary-button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void submitAction("bet", 100)}
+                      type="button"
+                    >
+                      Bet 2BB
+                    </button>
+                    <button
+                      className="ls-secondary-button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void submitAction("bet", 150)}
+                      type="button"
+                    >
+                      Bet 3BB
+                    </button>
+                    <button
+                      className="ls-secondary-button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void submitAction("bet", Math.max(1, table.potSize))}
+                      type="button"
+                    >
+                      Bet Pot
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="ls-secondary-button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void submitAction("raise", table.currentBet + 100)}
+                      type="button"
+                    >
+                      Raise +100
+                    </button>
+                    <button
+                      className="ls-secondary-button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void submitAction("raise", table.currentBet * 2)}
+                      type="button"
+                    >
+                      Min Raise
+                    </button>
+                    <button
+                      className="ls-secondary-button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void submitAction("raise", table.potSize + toCall * 2)}
+                      type="button"
+                    >
+                      Raise Pot
+                    </button>
+                  </>
+                )}
+                <button
+                  className="ls-primary-button"
+                  disabled={actionLoading !== null}
+                  onClick={() => void submitAction("all_in", currentStack)}
+                  type="button"
+                >
+                  All In
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="ls-runtime-pill">
+              {table.status !== "in_game"
+                ? "The practice hand will start automatically after you take your seat."
+                : "The bot or other player is acting. Controls unlock when the turn reaches you."}
+            </div>
+          )}
+
+          {actionError && <div className="ls-error">{actionError}</div>}
+        </section>
+      )}
 
       <section className="ls-chat-panel">
         <div className="ls-chat-header">
@@ -1515,22 +1716,22 @@ function AnalysisView({
   analytics,
   hands,
   table,
-  userId,
+  userFid,
 }: {
   loading: boolean;
   dashboard: ReturnType<typeof usePokerProductData>["dashboard"];
   analytics: ReturnType<typeof usePokerProductData>["analytics"];
   hands: ReturnType<typeof usePokerProductData>["hands"];
   table: PokerTable | null;
-  userId: string;
+  userFid: number;
 }) {
   const [solverData, setSolverData] = useState<SolverPanelData | null>(null);
   const [solverLoading, setSolverLoading] = useState(false);
   const [solverError, setSolverError] = useState<string | null>(null);
 
   const currentSeat = useMemo(
-    () => table?.seats.find((seat) => seat.user?.id === userId) ?? null,
-    [table, userId],
+    () => table?.seats.find((seat) => seat.user?.fid === userFid) ?? null,
+    [table, userFid],
   );
   const toCall = useMemo(() => {
     if (!table || !currentSeat) {
