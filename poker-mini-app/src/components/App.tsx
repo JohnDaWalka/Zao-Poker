@@ -8,6 +8,12 @@ import { HomeTab, DashboardTab, HandAnalysisTab, LeaderboardsTab, AnalyticsTab, 
 import { USE_WALLET } from "~/lib/constants";
 import { useNeynarUser } from "../hooks/useNeynarUser";
 import { useRuntimeHost } from "~/hooks/useRuntimeHost";
+import { Tab } from "~/lib/tabs";
+
+// Re-exported so existing importers of `Tab` from this module keep working.
+// The enum itself now lives in the leaf module `~/lib/tabs` to avoid the
+// App <-> Footer circular import that crashed the app at module evaluation.
+export { Tab };
 
 /** Outside a Farcaster client, the mini app SDK has nothing to acknowledge
  * readiness with and isSDKLoaded can stay false indefinitely. Past this
@@ -16,15 +22,6 @@ import { useRuntimeHost } from "~/hooks/useRuntimeHost";
 const SDK_LOAD_FALLBACK_MS = 2500;
 
 // --- Types ---
-export enum Tab {
-  Home = "home",
-  Dashboard = "dashboard",
-  HandAnalysis = "hand-analysis",
-  Leaderboards = "leaderboards",
-  Analytics = "analytics",
-  Wallet = "wallet",
-}
-
 export interface AppProps {
   title?: string;
 }

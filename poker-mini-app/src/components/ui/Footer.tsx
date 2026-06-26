@@ -1,5 +1,5 @@
 import React from "react";
-import { Tab } from "~/components/App";
+import { Tab } from "~/lib/tabs";
 
 interface FooterProps {
   activeTab: Tab;
