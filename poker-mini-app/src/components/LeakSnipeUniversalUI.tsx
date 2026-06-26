@@ -1,44 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  usePokerProductData,
+  type AnalyticsData,
+  type HandHistoryEntry,
+  type LeaderboardEntry,
+} from "~/hooks/usePokerProductData";
 import { ConnectWallet } from "~/components/ui/wallet/ConnectWallet";
 import { useMiniAppReady } from "~/hooks/useMiniAppReady";
-import { useRenderLobby, type PokerTable } from "~/hooks/useRenderLobby";
+import {
+  useRenderLobby,
+  type GameType,
+  type PokerTable,
+  type TableStatus,
+} from "~/hooks/useRenderLobby";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
 
 type Tab = "lobby" | "table" | "analysis" | "leaderboard" | "profile";
-
-const mockLeaderboard = [
-  { rank: 1, name: "NeonChemist", profit: "$247,890", tag: "Orbit Crusher" },
-  { rank: 2, name: "CryptoAce", profit: "$186,745", tag: "Chain Grinder" },
-  { rank: 3, name: "DataStack", profit: "$153,210", tag: "Solver Mind" },
-  { rank: 4, name: "RangeWizard", profit: "$131,875", tag: "Range Boss" },
-  { rank: 5, name: "You", profit: "$87,420", tag: "Leak Hunter" },
-];
-
-const mockHands = [
-  {
-    hand: "K♠ K♦",
-    board: "K♣ 9♠ 7♥ 2♠ K♥",
-    result: "+$237.50",
-    note: "Turn call was thin but river realization was clean.",
-    grade: "A-",
-  },
-  {
-    hand: "A♠ T♠",
-    board: "Q♠ 8♠ 3♦ 4♣ 2♠",
-    result: "+$91.20",
-    note: "Nut-flush draw aggression generated fold equity.",
-    grade: "B+",
-  },
-  {
-    hand: "7♦ 7♣",
-    board: "A♥ J♠ 7♠ 6♣ 2♦",
-    result: "+$164.80",
-    note: "Set extraction line was strong versus capped range.",
-    grade: "A",
-  },
-];
 
 function occupiedSeats(table: PokerTable) {
   return table.seats.filter((seat) => seat.user).length;
@@ -54,6 +33,103 @@ function getStatusLabel(status: PokerTable["status"]) {
 function shortAddress(address?: string) {
   if (!address) return null;
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatCards(cards: string[]) {
+  return cards.length > 0 ? cards.join(" ") : "—";
+}
+
+function formatStartTime(startTime?: string | null) {
+  if (!startTime) {
+    return "Open seating";
+  }
+
+  const timestamp = new Date(startTime).getTime();
+  if (Number.isNaN(timestamp)) {
+    return "Open seating";
+  }
+
+  const deltaMs = timestamp - Date.now();
+  if (deltaMs <= 0) {
+    return "Starting now";
+  }
+
+  const minutes = Math.round(deltaMs / 60000);
+  if (minutes < 60) {
+    return `Starts in ${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return `Starts in ${hours}h ${remainder}m`;
+}
+
+function handInsight(hand: HandHistoryEntry) {
+  if (hand.result === "win") {
+    return hand.resolution === "showdown"
+      ? "Showdown line held through the river."
+      : "Fold equity closed the hand before showdown.";
+  }
+
+  if (hand.result === "split") {
+    return "Pot was shared after both ranges converged.";
+  }
+
+  return hand.resolution === "fold"
+    ? "Pressure line didn’t realize fold equity."
+    : "Showdown equity fell short against villain’s range.";
+}
+
+function leaderboardTag(player: LeaderboardEntry) {
+  if (player.netWinnings > 0 && player.bestStreak >= 4) {
+    return "Heater";
+  }
+  if (player.handsPlayed >= 40) {
+    return "Volume";
+  }
+  if (player.handsWon > 0 && player.handsWon / Math.max(player.handsPlayed, 1) > 0.5) {
+    return "Closer";
+  }
+  return "Grinder";
+}
+
+function buildGraphPoints(analytics: AnalyticsData | null) {
+  const values =
+    analytics?.series?.length && analytics.series.some((point) => point.net !== 0)
+      ? analytics.series.map((point) => point.net)
+      : [0, 1, 0.5, 1.4, 0.8, 2, 1.6];
+
+  const width = 320;
+  const height = 120;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  return values
+    .map((value, index) => {
+      const x = (index / Math.max(values.length - 1, 1)) * width;
+      const normalized = (value - min) / range;
+      const y = height - normalized * 90 - 15;
+      return `${x},${y}`;
+    })
+    .join(" ");
+}
+
+function buildGraphAreaPath(analytics: AnalyticsData | null) {
+  const points = buildGraphPoints(analytics);
+  return `M${points.replace(/ /g, " L")} L320,120 L0,120 Z`;
 }
 
 function humanRuntimeLabel(runtimeHost: ReturnType<typeof useUniversalUser>["runtimeHost"]) {
@@ -76,11 +152,26 @@ export default function LeakSnipeUniversalUI() {
 
   const user = useUniversalUser();
   const lobby = useRenderLobby();
+  const productData = usePokerProductData(user.fid, user.authSource);
 
   const [activeTab, setActiveTab] = useState<Tab>("lobby");
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
+  const [lobbySearch, setLobbySearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | TableStatus>("all");
+  const [gameFilter, setGameFilter] = useState<"all" | GameType>("all");
 
   const tables = lobby.state.tables;
+  const filteredTables = useMemo(() => {
+    return tables.filter((table) => {
+      const matchesSearch =
+        lobbySearch.trim().length === 0 ||
+        table.name.toLowerCase().includes(lobbySearch.trim().toLowerCase()) ||
+        table.stakes.toLowerCase().includes(lobbySearch.trim().toLowerCase());
+      const matchesStatus = statusFilter === "all" || table.status === statusFilter;
+      const matchesGame = gameFilter === "all" || table.game === gameFilter;
+      return matchesSearch && matchesStatus && matchesGame;
+    });
+  }, [gameFilter, lobbySearch, statusFilter, tables]);
 
   const activeTable = useMemo(() => {
     return tables.find((table) => table.id === activeTableId) ?? tables[0] ?? null;
@@ -180,6 +271,7 @@ export default function LeakSnipeUniversalUI() {
         )}
 
         {lobby.error && <div className="ls-error">{lobby.error}</div>}
+        {productData.error && <div className="ls-error">{productData.error}</div>}
       </section>
 
       <section className="ls-main-grid">
@@ -246,10 +338,17 @@ export default function LeakSnipeUniversalUI() {
         <section className="ls-content">
           {activeTab === "lobby" && (
             <LobbyView
-              tables={tables}
+              tables={filteredTables}
               activeTableId={activeTable?.id ?? null}
               seatedTableId={seatedTable?.id ?? null}
               canCreate={lobby.supportsTableCreation}
+              searchValue={lobbySearch}
+              statusFilter={statusFilter}
+              gameFilter={gameFilter}
+              totalTables={tables.length}
+              onSearchChange={setLobbySearch}
+              onStatusFilterChange={setStatusFilter}
+              onGameFilterChange={setGameFilter}
               onCreate={createTable}
               onSelect={(table) => {
                 setActiveTableId(table.id);
@@ -270,15 +369,32 @@ export default function LeakSnipeUniversalUI() {
             />
           )}
 
-          {activeTab === "analysis" && <AnalysisView />}
+          {activeTab === "analysis" && (
+            <AnalysisView
+              loading={productData.loading}
+              dashboard={productData.dashboard}
+              analytics={productData.analytics}
+              hands={productData.hands}
+            />
+          )}
 
-          {activeTab === "leaderboard" && <LeaderboardView />}
+          {activeTab === "leaderboard" && (
+            <LeaderboardView
+              leaderboard={productData.leaderboard}
+              viewerRank={productData.viewerRank}
+              currentFid={user.fid}
+              bestFriends={productData.bestFriends}
+            />
+          )}
 
           {activeTab === "profile" && (
             <ProfileView
               user={user}
               tableCount={tables.length}
               seatedTable={seatedTable}
+              dashboard={productData.dashboard}
+              analytics={productData.analytics}
+              bestFriendCount={productData.bestFriends.length}
             />
           )}
         </section>
@@ -344,6 +460,13 @@ function LobbyView({
   activeTableId,
   seatedTableId,
   canCreate,
+  searchValue,
+  statusFilter,
+  gameFilter,
+  totalTables,
+  onSearchChange,
+  onStatusFilterChange,
+  onGameFilterChange,
   onCreate,
   onSelect,
   onJoin,
@@ -352,6 +475,13 @@ function LobbyView({
   activeTableId: string | null;
   seatedTableId: string | null;
   canCreate: boolean;
+  searchValue: string;
+  statusFilter: "all" | TableStatus;
+  gameFilter: "all" | GameType;
+  totalTables: number;
+  onSearchChange: (value: string) => void;
+  onStatusFilterChange: (value: "all" | TableStatus) => void;
+  onGameFilterChange: (value: "all" | GameType) => void;
   onCreate: () => void;
   onSelect: (table: PokerTable) => void;
   onJoin: (table: PokerTable) => void;
@@ -378,7 +508,66 @@ function LobbyView({
         </button>
       </div>
 
+      <section className="ls-lobby-controls">
+        <label className="ls-filter-field">
+          <span>Search</span>
+          <input
+            className="ls-filter-input"
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Table name or stakes"
+            type="text"
+            value={searchValue}
+          />
+        </label>
+
+        <label className="ls-filter-field">
+          <span>Status</span>
+          <select
+            className="ls-filter-input"
+            onChange={(event) =>
+              onStatusFilterChange(event.target.value as "all" | TableStatus)
+            }
+            value={statusFilter}
+          >
+            <option value="all">All statuses</option>
+            <option value="waiting">Waiting</option>
+            <option value="seated">Seated</option>
+            <option value="in_game">In Game</option>
+            <option value="full">Full</option>
+          </select>
+        </label>
+
+        <label className="ls-filter-field">
+          <span>Game</span>
+          <select
+            className="ls-filter-input"
+            onChange={(event) =>
+              onGameFilterChange(event.target.value as "all" | GameType)
+            }
+            value={gameFilter}
+          >
+            <option value="all">All games</option>
+            <option value="NLHE">NLHE</option>
+            <option value="PLO">PLO</option>
+            <option value="PLO8">PLO8</option>
+            <option value="STUD8">STUD8</option>
+          </select>
+        </label>
+
+        <div className="ls-filter-summary">
+          <strong>{tables.length}</strong>
+          <small>{tables.length === totalTables ? "Live tables" : `of ${totalTables} live tables`}</small>
+        </div>
+      </section>
+
       <div className="ls-lobby-grid">
+        {tables.length === 0 && (
+          <div className="ls-empty-card">
+            <strong>No tables match these filters.</strong>
+            <p>Try widening the status or game filters to see more live action.</p>
+          </div>
+        )}
+
         {tables.map((table) => {
           const occupied = occupiedSeats(table);
           const isActive = table.id === activeTableId;
@@ -403,10 +592,11 @@ function LobbyView({
 
               <div className="ls-table-meta">
                 <span>{table.stakes}</span>
-                <span>${table.buyIn} buy-in</span>
+                <span>{formatCurrency(table.buyIn)} buy-in</span>
                 <span>
                   {occupied}/{table.maxPlayers} seated
                 </span>
+                <span>{formatStartTime(table.startTime)}</span>
               </div>
 
               <SeatDots table={table} />
@@ -492,6 +682,7 @@ function TableView({
           <p>
             {table.game} · {table.stakes} · {occupied}/{table.maxPlayers} seated
           </p>
+          <p>{formatStartTime(table.startTime)}</p>
         </div>
 
         <div className="ls-action-row">
@@ -556,9 +747,11 @@ function TableView({
             <strong>{seat.user?.displayName ?? "Open Seat"}</strong>
             <small>
               {seat.user
-                ? seat.isReady
+                ? seat.isBot
+                  ? `Autoplay bot · ${formatCurrency(seat.stack)}`
+                  : seat.isReady
                   ? "Ready"
-                  : `$${seat.stack} stack`
+                  : `${formatCurrency(seat.stack)} stack`
                 : "Available"}
             </small>
           </div>
@@ -568,48 +761,85 @@ function TableView({
       <section className="ls-table-info-grid">
         <InfoTile label="Game" value={table.game} />
         <InfoTile label="Stakes" value={table.stakes} />
-        <InfoTile label="Buy-in" value={`$${table.buyIn}`} />
+        <InfoTile label="Buy-in" value={formatCurrency(table.buyIn)} />
         <InfoTile label="Status" value={getStatusLabel(table.status)} />
       </section>
     </div>
   );
 }
 
-function AnalysisView() {
+function AnalysisView({
+  loading,
+  dashboard,
+  analytics,
+  hands,
+}: {
+  loading: boolean;
+  dashboard: ReturnType<typeof usePokerProductData>["dashboard"];
+  analytics: ReturnType<typeof usePokerProductData>["analytics"];
+  hands: ReturnType<typeof usePokerProductData>["hands"];
+}) {
   return (
     <div className="ls-view">
       <div className="ls-view-header">
         <div>
           <p className="ls-eyebrow">Hand Intelligence</p>
           <h2>Recent analysis</h2>
-          <p>Review EV, board texture, leak notes, and decision grades.</p>
+          <p>Review real hand history, win-rate trend, and session performance.</p>
         </div>
       </div>
 
       <section className="ls-analysis-hero">
         <div>
-          <small>Session EV</small>
-          <strong>+$487.30</strong>
-          <p>Last 342 hands · +18.4 bb/100</p>
+          <small>Session Net</small>
+          <strong>{formatCurrency(dashboard?.netWinnings ?? 0)}</strong>
+          <p>
+            {analytics?.hands ?? dashboard?.handsPlayed ?? 0} hands ·{" "}
+            {formatPercent(analytics?.winRate ?? dashboard?.winRate ?? 0)} win rate ·{" "}
+            {(analytics?.netPer100Hands ?? 0).toFixed(1)} net / 100
+          </p>
         </div>
 
-        <MiniGraph />
+        <MiniGraph analytics={analytics} />
+      </section>
+
+      <section className="ls-table-info-grid">
+        <InfoTile label="Hands Played" value={String(dashboard?.handsPlayed ?? 0)} />
+        <InfoTile label="Hands Won" value={String(dashboard?.handsWon ?? 0)} />
+        <InfoTile label="Biggest Pot" value={formatCurrency(dashboard?.biggestPotWon ?? 0)} />
+        <InfoTile label="Best Streak" value={String(dashboard?.bestStreak ?? 0)} />
       </section>
 
       <div className="ls-hand-list">
-        {mockHands.map((hand) => (
-          <article key={`${hand.hand}-${hand.board}`} className="ls-hand-card">
+        {loading && hands.length === 0 && (
+          <div className="ls-empty-card">
+            <strong>Loading hand history…</strong>
+            <p>Pulling recent hands and analytics from the table ledger.</p>
+          </div>
+        )}
+
+        {!loading && hands.length === 0 && (
+          <div className="ls-empty-card">
+            <strong>No hands recorded yet.</strong>
+            <p>Play a few hands to unlock replays, trend lines, and session stats.</p>
+          </div>
+        )}
+
+        {hands.map((hand) => (
+          <article key={hand.id} className="ls-hand-card">
             <div className="ls-hand-left">
-              <div className="ls-hole-cards">{hand.hand}</div>
+              <div className="ls-hole-cards">{formatCards(hand.holeCards)}</div>
               <div>
-                <strong>{hand.board}</strong>
-                <p>{hand.note}</p>
+                <strong>{formatCards(hand.board)}</strong>
+                <p>
+                  {handInsight(hand)} · {hand.phaseReached} · {hand.resolution}
+                </p>
               </div>
             </div>
 
             <div className="ls-hand-result">
-              <strong>{hand.result}</strong>
-              <span>{hand.grade}</span>
+              <strong>{formatCurrency(hand.netAmount)}</strong>
+              <span>{hand.result.slice(0, 1).toUpperCase()}</span>
             </div>
           </article>
         ))}
@@ -618,41 +848,83 @@ function AnalysisView() {
   );
 }
 
-function LeaderboardView() {
+function LeaderboardView({
+  leaderboard,
+  viewerRank,
+  currentFid,
+  bestFriends,
+}: {
+  leaderboard: ReturnType<typeof usePokerProductData>["leaderboard"];
+  viewerRank: ReturnType<typeof usePokerProductData>["viewerRank"];
+  currentFid: number;
+  bestFriends: ReturnType<typeof usePokerProductData>["bestFriends"];
+}) {
+  const podium = leaderboard.slice(0, 3);
+
   return (
     <div className="ls-view">
       <div className="ls-view-header">
         <div>
           <p className="ls-eyebrow">Social Edge</p>
           <h2>Leaderboard</h2>
-          <p>Friends, squads, and global rankings.</p>
+          <p>First-party rankings, streaks, and your Farcaster social rail.</p>
+        </div>
+        <div className="ls-filter-summary">
+          <strong>{viewerRank ? `#${viewerRank}` : "—"}</strong>
+          <small>Your rank</small>
         </div>
       </div>
 
       <section className="ls-podium">
-        {mockLeaderboard.slice(0, 3).map((player) => (
-          <div key={player.rank} className={`ls-podium-card rank-${player.rank}`}>
-            <span>{player.rank}</span>
-            <strong>{player.name}</strong>
-            <b>{player.profit}</b>
-            <small>{player.tag}</small>
+        {podium.length === 0 ? (
+          <div className="ls-empty-card">
+            <strong>No ranked players yet.</strong>
+            <p>Once hand history resolves, the leaderboard populates automatically.</p>
           </div>
-        ))}
+        ) : (
+          podium.map((player) => (
+            <div key={player.rank} className={`ls-podium-card rank-${player.rank}`}>
+              <span>{player.rank}</span>
+              <strong>{player.username}</strong>
+              <b>{formatCurrency(player.netWinnings)}</b>
+              <small>{leaderboardTag(player)}</small>
+            </div>
+          ))
+        )}
       </section>
 
+      {bestFriends.length > 0 && (
+        <section className="ls-friends-strip">
+          <div className="ls-friends-header">
+            <strong>Squad radar</strong>
+            <small>Your top Farcaster connections</small>
+          </div>
+          <div className="ls-friends-list">
+            {bestFriends.map((friend) => (
+              <div key={friend.user.fid} className="ls-friend-chip">
+                <strong>{friend.user.username}</strong>
+                <small>FID {friend.user.fid}</small>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="ls-rank-list">
-        {mockLeaderboard.map((player) => (
+        {leaderboard.map((player) => (
           <div
-            key={player.rank}
-            className={player.name === "You" ? "ls-rank-row you" : "ls-rank-row"}
+            key={player.fid}
+            className={player.fid === currentFid ? "ls-rank-row you" : "ls-rank-row"}
           >
             <span>#{player.rank}</span>
-            <div className="ls-rank-avatar">{player.name.slice(0, 1)}</div>
+            <div className="ls-rank-avatar">{player.username.slice(0, 1)}</div>
             <div>
-              <strong>{player.name}</strong>
-              <small>{player.tag}</small>
+              <strong>{player.username}</strong>
+              <small>
+                {player.handsPlayed} hands · {formatPercent(player.handsWon / Math.max(player.handsPlayed, 1))} win rate
+              </small>
             </div>
-            <b>{player.profit}</b>
+            <b>{formatCurrency(player.netWinnings)}</b>
           </div>
         ))}
       </section>
@@ -664,10 +936,16 @@ function ProfileView({
   user,
   tableCount,
   seatedTable,
+  dashboard,
+  analytics,
+  bestFriendCount,
 }: {
   user: ReturnType<typeof useUniversalUser>;
   tableCount: number;
   seatedTable?: PokerTable;
+  dashboard: ReturnType<typeof usePokerProductData>["dashboard"];
+  analytics: ReturnType<typeof usePokerProductData>["analytics"];
+  bestFriendCount: number;
 }) {
   return (
     <div className="ls-view">
@@ -676,8 +954,7 @@ function ProfileView({
           <p className="ls-eyebrow">Universal Profile</p>
           <h2>{user.displayName}</h2>
           <p>
-            Identity resolves from Farcaster first, then wallet, then browser
-            guest.
+            Identity resolves from Farcaster first, then wallet, then browser guest.
           </p>
         </div>
       </div>
@@ -685,16 +962,17 @@ function ProfileView({
       <section className="ls-profile-grid">
         <InfoTile label="Runtime" value={humanRuntimeLabel(user.runtimeHost)} />
         <InfoTile label="Auth Source" value={user.authSource} />
-        <InfoTile
-          label="FID"
-          value={user.authSource === "farcaster" ? String(user.fid) : "None"}
-        />
+        <InfoTile label="FID" value={String(user.fid)} />
         <InfoTile
           label="Wallet"
           value={shortAddress(user.walletAddress) ?? "None"}
         />
-        <InfoTile label="Tables Online" value={String(tableCount)} />
+        <InfoTile label="Hands Played" value={String(dashboard?.handsPlayed ?? 0)} />
+        <InfoTile label="Win Rate" value={formatPercent(dashboard?.winRate ?? 0)} />
+        <InfoTile label="14D Net / 100" value={(analytics?.netPer100Hands ?? 0).toFixed(1)} />
+        <InfoTile label="Best Friends" value={String(bestFriendCount)} />
         <InfoTile label="Current Table" value={seatedTable?.name ?? "None"} />
+        <InfoTile label="Tables Online" value={String(tableCount)} />
       </section>
 
       <section className="ls-resilience-card">
@@ -702,8 +980,10 @@ function ProfileView({
         <div>
           <strong>Chemist’s mind. Player’s heart. Analyst’s edge.</strong>
           <p>
-            Built for range study, bankroll discipline, table selection,
-            cross-chain identity, and real-time social poker.
+            Built for range study, bankroll discipline, table selection, cross-chain
+            identity, and real-time social poker. This build now surfaces the
+            first-party baseline pro apps rely on: lobby filters, hand history,
+            leaderboard stats, and social identity.
           </p>
         </div>
       </section>
@@ -720,7 +1000,9 @@ function InfoTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MiniGraph() {
+function MiniGraph({ analytics }: { analytics: AnalyticsData | null }) {
+  const linePoints = buildGraphPoints(analytics);
+  const fillPath = buildGraphAreaPath(analytics);
   return (
     <svg className="ls-mini-graph" viewBox="0 0 320 120" preserveAspectRatio="none">
       <defs>
@@ -737,12 +1019,12 @@ function MiniGraph() {
       </defs>
 
       <path
-        d="M0,88 L32,82 L64,92 L96,61 L128,66 L160,48 L192,55 L224,36 L256,42 L288,22 L320,28 L320,120 L0,120 Z"
+        d={fillPath}
         fill="url(#lsGraphFill)"
       />
 
       <polyline
-        points="0,88 32,82 64,92 96,61 128,66 160,48 192,55 224,36 256,42 288,22 320,28"
+        points={linePoints}
         fill="none"
         stroke="url(#lsGraphLine)"
         strokeWidth="5"

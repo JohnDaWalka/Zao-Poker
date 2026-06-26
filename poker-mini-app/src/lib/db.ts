@@ -78,6 +78,7 @@ async function initializeDb() {
       hand TEXT DEFAULT '',
       current_bet INTEGER DEFAULT 0,
       status TEXT DEFAULT 'waiting', -- 'waiting', 'playing', 'folded', 'sitting_out'
+      is_bot INTEGER DEFAULT 0,
       is_ready INTEGER DEFAULT 0,
       has_acted INTEGER DEFAULT 0,
       total_invested INTEGER DEFAULT 0,
@@ -144,6 +145,7 @@ async function initializeDb() {
   await addMissingColumns("players", {
     seat_index: "INTEGER",
     status: "TEXT DEFAULT 'waiting'",
+    is_bot: "INTEGER DEFAULT 0",
     is_ready: "INTEGER DEFAULT 0",
     last_seen: "DATETIME",
     has_acted: "INTEGER DEFAULT 0",
@@ -218,7 +220,7 @@ async function initializeDb() {
     "UPDATE tables SET turn_started_at = COALESCE(turn_started_at, CURRENT_TIMESTAMP), created_at = COALESCE(created_at, CURRENT_TIMESTAMP), updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)",
   );
   await db.execute(
-    "UPDATE players SET is_ready = COALESCE(is_ready, 0), total_invested = COALESCE(total_invested, 0), last_seen = COALESCE(last_seen, CURRENT_TIMESTAMP)",
+    "UPDATE players SET is_bot = COALESCE(is_bot, 0), is_ready = COALESCE(is_ready, 0), total_invested = COALESCE(total_invested, 0), last_seen = COALESCE(last_seen, CURRENT_TIMESTAMP)",
   );
 }
 

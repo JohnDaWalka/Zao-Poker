@@ -86,6 +86,34 @@ const BLIND_LEVELS = [
   { sb: 6000, bb: 12000, ante: 3000 }
 ];
 
+const DEFAULT_LOBBY_BOTS: Record<
+  string,
+  { fid: number; username: string; pfp_url: string; preferredSeat: number }
+> = {
+  room_1: {
+    fid: 1,
+    username: "PokerCoachJohnny",
+    pfp_url: "https://i.imgur.com/k2j4j3V.jpeg",
+    preferredSeat: 1,
+  },
+  room_2: {
+    fid: 900001,
+    username: "OrbitGrinder",
+    pfp_url: "https://i.imgur.com/k2j4j3V.jpeg",
+    preferredSeat: 1,
+  },
+  room_3: {
+    fid: 900002,
+    username: "RangeSpectre",
+    pfp_url: "https://i.imgur.com/k2j4j3V.jpeg",
+    preferredSeat: 1,
+  },
+};
+
+function isBotPlayer(player: any) {
+  return Number(player?.is_bot || 0) === 1;
+}
+
 function getCurrentBlinds(startTimeStr: string | null) {
   if (!startTimeStr) return { levelIndex: 0, blinds: BLIND_LEVELS[0], nextLevelInSecs: 360 };
   
@@ -163,6 +191,7 @@ async function dealNewHand(tableId: string, fids: number[]) {
   const { blinds } = getCurrentBlinds(startTime ? String(startTime) : null);
   
   let potSize = 0;
+  let highestPostedBlind = 0;
 
   // New hand: reset each player's running "chips invested this hand" so
   // hand_history/player_stats can compute accurate net win/loss later.
@@ -207,12 +236,19 @@ async function dealNewHand(tableId: string, fids: number[]) {
     let blindAmount = 0;
     if (fid === sbFid) blindAmount = blinds.sb;
     if (fid === bbFid) blindAmount = blinds.bb; // if sb=bb, bb overrides
+    const { rows: stackRows } = await db.execute({
+      sql: "SELECT stack_size FROM players WHERE fid = ? AND table_id = ?",
+      args: [fid, tableId],
+    });
+    const stack = Number(stackRows[0]?.stack_size || 0);
+    const actualBlind = Math.min(stack, blindAmount);
 
-    potSize += blindAmount;
+    potSize += actualBlind;
+    highestPostedBlind = Math.max(highestPostedBlind, actualBlind);
 
     await db.execute({
       sql: "UPDATE players SET hand = ?, current_bet = ?, stack_size = stack_size - ?, total_invested = total_invested + ?, status = 'playing', is_ready = 0, has_acted = 0 WHERE fid = ? AND table_id = ?",
-      args: [hand, blindAmount, blindAmount, blindAmount, fid, tableId]
+      args: [hand, actualBlind, actualBlind, actualBlind, fid, tableId]
     });
   }
 
@@ -221,7 +257,7 @@ async function dealNewHand(tableId: string, fids: number[]) {
   // Initialize pot
   await db.execute({
     sql: "UPDATE tables SET pot_size = ?, current_bet = ?, board = '', deck = ?, action_history = '', phase = 'preflop', status = 'playing', current_turn_fid = ?, last_aggressor_fid = ?, turn_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-    args: [potSize, blinds.bb, deckStr, currentTurnFid, lastAggressorFid, tableId]
+    args: [potSize, highestPostedBlind, deckStr, currentTurnFid, lastAggressorFid, tableId]
   });
 }
 
@@ -337,6 +373,335 @@ function getLowestOpenSeat(players: any[], maxPlayers: number) {
   return maxPlayers;
 }
 
+async function ensureAutoplayBot(tableId: string) {
+  const botProfile = DEFAULT_LOBBY_BOTS[tableId];
+  if (!botProfile) {
+    return;
+  }
+
+  const { rows: tableRows } = await db.execute({
+    sql: "SELECT status, max_players FROM tables WHERE id = ?",
+    args: [tableId],
+  });
+  const tableState = tableRows[0];
+  if (!tableState) {
+    return;
+  }
+
+  const { rows: players } = await db.execute({
+    sql: "SELECT fid, seat_index, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+    args: [tableId],
+  });
+
+  const humans = players.filter((player: any) => !isBotPlayer(player));
+  const bots = players.filter((player: any) => isBotPlayer(player));
+  const maxPlayers = Number(tableState.max_players || 6);
+
+  if (humans.length === 0 && tableState.status === "playing") {
+    await db.execute({
+      sql: "DELETE FROM players WHERE table_id = ?",
+      args: [tableId],
+    });
+    await db.execute({
+      sql: "UPDATE tables SET status = 'waiting', pot_size = 0, current_bet = 0, board = '', deck = '', action_history = '', phase = 'preflop', current_turn_fid = NULL, last_aggressor_fid = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      args: [tableId],
+    });
+    players.length = 0;
+    bots.length = 0;
+  }
+
+  if (humans.length >= 2 && tableState.status !== "playing" && bots.length > 0) {
+    await db.execute({
+      sql: "DELETE FROM players WHERE table_id = ? AND is_bot = 1",
+      args: [tableId],
+    });
+    return;
+  }
+
+  if (humans.length <= 1 && bots.length === 0) {
+    const preferredSeatOpen = !players.some(
+      (player: any) => Number(player.seat_index) === botProfile.preferredSeat,
+    );
+    const seatIndex = preferredSeatOpen
+      ? botProfile.preferredSeat
+      : getLowestOpenSeat(players, maxPlayers);
+
+    await db.execute({
+      sql: `
+        INSERT OR REPLACE INTO players (
+          fid,
+          username,
+          pfp_url,
+          table_id,
+          seat_index,
+          stack_size,
+          hand,
+          current_bet,
+          status,
+          is_bot,
+          is_ready,
+          has_acted,
+          total_invested,
+          last_seen
+        )
+        VALUES (?, ?, ?, ?, ?, 5000, '', 0, 'waiting', 1, 1, 0, 0, CURRENT_TIMESTAMP)
+      `,
+      args: [
+        botProfile.fid,
+        botProfile.username,
+        botProfile.pfp_url,
+        tableId,
+        seatIndex,
+      ],
+    });
+  } else if (bots.length > 1) {
+    const extraBotFids = bots.slice(1).map((player: any) => Number(player.fid));
+    if (extraBotFids.length > 0) {
+      await db.execute({
+        sql: `DELETE FROM players WHERE table_id = ? AND fid IN (${extraBotFids.map(() => "?").join(", ")})`,
+        args: [tableId, ...extraBotFids],
+      });
+    }
+  }
+}
+
+async function ensureDefaultLobbyBots() {
+  for (const tableId of Object.keys(DEFAULT_LOBBY_BOTS)) {
+    await ensureAutoplayBot(tableId);
+  }
+}
+
+function shouldStartAutoplayHand(tableState: any, players: any[]) {
+  if (!tableState || players.length < 2 || tableState.status === "playing") {
+    return false;
+  }
+
+  const humans = players.filter((player: any) => !isBotPlayer(player));
+  const bots = players.filter((player: any) => isBotPlayer(player));
+  if (humans.length > 0 && bots.length > 0) {
+    return true;
+  }
+
+  const startTime = tableState.start_time
+    ? new Date(String(tableState.start_time)).getTime()
+    : null;
+  return startTime !== null && startTime <= Date.now();
+}
+
+function hasHumanAndBot(players: any[]) {
+  const humans = players.filter((player: any) => !isBotPlayer(player));
+  const bots = players.filter((player: any) => isBotPlayer(player));
+  return humans.length > 0 && bots.length > 0;
+}
+
+async function refreshAutoplayStartTime(tableId: string, players: any[]) {
+  if (!hasHumanAndBot(players)) {
+    return;
+  }
+
+  await db.execute({
+    sql: "UPDATE tables SET start_time = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    args: [tableId],
+  });
+}
+
+async function playAutomatedTurn(tableId: string) {
+  const { rows: stateRows } = await db.execute({
+    sql: "SELECT * FROM tables WHERE id = ?",
+    args: [tableId],
+  });
+  const currentGameState = stateRows[0];
+  if (!currentGameState || currentGameState.status !== "playing" || !currentGameState.current_turn_fid) {
+    return false;
+  }
+
+  const { rows: remainingActive } = await db.execute({
+    sql: `
+      SELECT fid, current_bet, has_acted, hand, stack_size, is_bot
+      FROM players
+      WHERE table_id = ? AND status = 'playing'
+      ORDER BY seat_index ASC
+    `,
+    args: [tableId],
+  });
+
+  const aiPlayer = remainingActive.find(
+    (player: any) =>
+      Number(player.fid) === Number(currentGameState.current_turn_fid) &&
+      isBotPlayer(player),
+  );
+  if (!aiPlayer) {
+    return false;
+  }
+
+  const newTableBet = Number(currentGameState.current_bet || 0);
+  const newPotSize = Number(currentGameState.pot_size || 0);
+  const aiCurrentBet = Number(aiPlayer.current_bet || 0);
+  const aiToCall = newTableBet - aiCurrentBet;
+  const aiFid = Number(aiPlayer.fid);
+  const aiDecision = evaluateAIAction(
+    String(aiPlayer.hand || ""),
+    String(currentGameState.board || ""),
+    aiToCall,
+    newPotSize,
+    Number(aiPlayer.stack_size || 0),
+    parseActionHistory(currentGameState.action_history),
+  );
+
+  await db.execute({
+    sql: "UPDATE players SET has_acted = 1, last_seen = CURRENT_TIMESTAMP WHERE fid = ? AND table_id = ?",
+    args: [aiFid, tableId],
+  });
+
+  if (aiDecision.action === "raise" || aiDecision.action === "bet") {
+    const aiTargetBet = Math.max(
+      newTableBet,
+      Math.min(
+        Number(aiPlayer.stack_size || 0) + aiCurrentBet,
+        Number(aiDecision.targetBet || newTableBet),
+      ),
+    );
+    const aiBetDiff = Math.max(0, aiTargetBet - aiCurrentBet);
+
+    if (aiBetDiff > 0) {
+      await db.execute({
+        sql: "UPDATE tables SET pot_size = pot_size + ?, current_bet = ? WHERE id = ?",
+        args: [aiBetDiff, aiTargetBet, tableId],
+      });
+      await db.execute({
+        sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = ? AND table_id = ?",
+        args: [aiBetDiff, aiTargetBet, aiBetDiff, aiFid, tableId],
+      });
+      await db.execute({
+        sql: "UPDATE players SET has_acted = 0 WHERE table_id = ? AND status = 'playing' AND is_bot = 0",
+        args: [tableId],
+      });
+      await db.execute({
+        sql: "UPDATE players SET has_acted = 1 WHERE fid = ? AND table_id = ?",
+        args: [aiFid, tableId],
+      });
+      await appendActionHistory(tableId, "ai", aiDecision.action, aiTargetBet);
+
+      const { rows: activeAfterRaise } = await db.execute({
+        sql: "SELECT fid FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
+        args: [tableId],
+      });
+      const aiCurrentIndex = activeAfterRaise.findIndex((player: any) => Number(player.fid) === aiFid);
+      const aiNextIndex = (aiCurrentIndex + 1) % activeAfterRaise.length;
+      const aiNextFid = activeAfterRaise[aiNextIndex].fid;
+      await db.execute({
+        sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+        args: [aiNextFid, tableId],
+      });
+    }
+
+    return true;
+  }
+
+  if (aiDecision.action === "call" || aiDecision.action === "check" || aiToCall === 0) {
+    const callAmount = Math.max(0, aiToCall);
+    await db.execute({
+      sql: "UPDATE tables SET pot_size = pot_size + ? WHERE id = ?",
+      args: [callAmount, tableId],
+    });
+    await db.execute({
+      sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = ? AND table_id = ?",
+      args: [callAmount, newTableBet, callAmount, aiFid, tableId],
+    });
+    await appendActionHistory(
+      tableId,
+      "ai",
+      callAmount > 0 ? "call" : "check",
+      callAmount > 0 ? callAmount : undefined,
+    );
+
+    const { rows: activeAfterAI } = await db.execute({
+      sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
+      args: [tableId],
+    });
+    const aiStreetOver = activeAfterAI.every(
+      (player: any) => Number(player.has_acted || 0) === 1 && Number(player.current_bet || 0) === newTableBet,
+    );
+
+    if (aiStreetOver) {
+      const { rows: freshState } = await db.execute({
+        sql: "SELECT * FROM tables WHERE id = ?",
+        args: [tableId],
+      });
+      await advanceGame(tableId, freshState[0]);
+    } else {
+      const aiCurrentIndex = activeAfterAI.findIndex((player: any) => Number(player.fid) === aiFid);
+      const aiNextIndex = (aiCurrentIndex + 1) % activeAfterAI.length;
+      const aiNextFid = activeAfterAI[aiNextIndex].fid;
+      await db.execute({
+        sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+        args: [aiNextFid, tableId],
+      });
+    }
+
+    return true;
+  }
+
+  await db.execute({
+    sql: "UPDATE players SET status = 'folded' WHERE fid = ? AND table_id = ?",
+    args: [aiFid, tableId],
+  });
+  await appendActionHistory(tableId, "ai", "fold");
+
+  const { rows: rem } = await db.execute({
+    sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
+    args: [tableId],
+  });
+  if (rem.length === 1) {
+    await db.execute({
+      sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?",
+      args: [newPotSize, rem[0].fid, tableId],
+    });
+    await db.execute({
+      sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?",
+      args: [tableId],
+    });
+    await resolveFoldWin(
+      tableId,
+      Number(rem[0].fid),
+      newPotSize,
+      String(currentGameState.board || ""),
+      String(currentGameState.phase || "preflop"),
+    );
+    return true;
+  }
+
+  const aiStreetOver = rem.every(
+    (player: any) => Number(player.has_acted || 0) === 1 && Number(player.current_bet || 0) === newTableBet,
+  );
+  if (aiStreetOver) {
+    const { rows: freshState } = await db.execute({
+      sql: "SELECT * FROM tables WHERE id = ?",
+      args: [tableId],
+    });
+    await advanceGame(tableId, freshState[0]);
+  } else {
+    const oldAiIndex = remainingActive.findIndex((player: any) => Number(player.fid) === aiFid);
+    const aiNextIndex = oldAiIndex % rem.length;
+    const aiNextFid = rem[aiNextIndex].fid;
+    await db.execute({
+      sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+      args: [aiNextFid, tableId],
+    });
+  }
+
+  return true;
+}
+
+async function runAutoplayUntilHuman(tableId: string, maxTurns = 4) {
+  for (let turn = 0; turn < maxTurns; turn += 1) {
+    const acted = await playAutomatedTurn(tableId);
+    if (!acted) {
+      break;
+    }
+  }
+}
+
 async function getTableSnapshot(tableId: string) {
   const { rows } = await db.execute({
     sql: "SELECT * FROM tables WHERE id = ?",
@@ -349,7 +714,7 @@ async function getTableSnapshot(tableId: string) {
   }
 
   const { rows: players } = await db.execute({
-    sql: "SELECT fid, username, pfp_url, stack_size, hand, current_bet, status, seat_index, is_ready FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+    sql: "SELECT fid, username, pfp_url, stack_size, hand, current_bet, status, seat_index, is_ready, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
     args: [tableId],
   });
 
@@ -369,7 +734,9 @@ async function buildTableResponse(tableId: string) {
   const { levelIndex, blinds, nextLevelInSecs } = getCurrentBlinds(
     tableState.start_time ? String(tableState.start_time) : null,
   );
-  const readyCount = players.filter((player: any) => Number(player.is_ready || 0) === 1).length;
+  const readyCount = players.filter(
+    (player: any) => !isBotPlayer(player) && Number(player.is_ready || 0) === 1,
+  ).length;
 
   return {
     success: true,
@@ -412,23 +779,30 @@ export async function GET(request: Request) {
         );
       }
 
-      // Auto-start logic if start_time is reached
-      if (tableState && tableState.status === 'waiting' && tableState.start_time) {
-        if (Date.now() >= new Date(String(tableState.start_time)).getTime()) {
-          const { rows: players } = await db.execute({
-            sql: "SELECT fid FROM players WHERE table_id = ? ORDER BY seat_index ASC",
-            args: [tableId]
+      await ensureAutoplayBot(tableId);
+      const { rows: refreshedRows } = await db.execute({
+        sql: "SELECT * FROM tables WHERE id = ?",
+        args: [tableId],
+      });
+      tableState = refreshedRows[0];
+
+      if (tableState && tableState.status === "waiting") {
+        const { rows: waitingPlayers } = await db.execute({
+          sql: "SELECT fid, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+          args: [tableId],
+        });
+        if (shouldStartAutoplayHand(tableState, waitingPlayers)) {
+          await refreshAutoplayStartTime(tableId, waitingPlayers);
+          await dealNewHand(
+            tableId,
+            waitingPlayers.map((player) => Number(player.fid)),
+          );
+          await runAutoplayUntilHuman(tableId);
+          const { rows: updatedRows } = await db.execute({
+            sql: "SELECT * FROM tables WHERE id = ?",
+            args: [tableId],
           });
-          const fids = players.map((player) => Number(player.fid));
-          if (fids.length >= 2) {
-            await dealNewHand(tableId, fids);
-            // Re-fetch updated state
-            const { rows: updatedRows } = await db.execute({
-              sql: "SELECT * FROM tables WHERE id = ?",
-              args: [tableId]
-            });
-            tableState = updatedRows[0];
-          }
+          tableState = updatedRows[0];
         }
       }
 
@@ -443,18 +817,20 @@ export async function GET(request: Request) {
       // Remove idle human players after 10 minutes. The built-in practice bot
       // does not poll this endpoint and must not be deleted as "inactive".
       await db.execute({
-        sql: "DELETE FROM players WHERE table_id = ? AND fid != 1 AND (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', last_seen)) > 600",
+        sql: "DELETE FROM players WHERE table_id = ? AND is_bot = 0 AND (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', last_seen)) > 600",
         args: [tableId]
       });
+
+      await ensureAutoplayBot(tableId);
 
       // Check for 25s auto-fold / sit-out
       if (tableState && tableState.status === 'playing' && tableState.current_turn_fid && tableState.turn_started_at) {
         const { rows: pRows } = await db.execute({
-          sql: "SELECT last_seen FROM players WHERE fid = ? AND table_id = ?",
+          sql: "SELECT last_seen, is_bot FROM players WHERE fid = ? AND table_id = ?",
           args: [tableState.current_turn_fid, tableId]
         });
         
-        if (pRows.length > 0) {
+        if (pRows.length > 0 && !isBotPlayer(pRows[0])) {
           const { rows: timeRows } = await db.execute({
             sql: "SELECT (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', ?)) as elapsed_turn, (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', ?)) as elapsed_seen",
             args: [tableState.turn_started_at, pRows[0].last_seen]
@@ -498,6 +874,8 @@ export async function GET(request: Request) {
         }
       }
 
+      await runAutoplayUntilHuman(tableId);
+
       const response = await buildTableResponse(tableId);
       if (!response) {
         return NextResponse.json(
@@ -509,9 +887,10 @@ export async function GET(request: Request) {
       return NextResponse.json(response);
     } else {
       // Lobby Mode - list all tables and player counts
+      await ensureDefaultLobbyBots();
       const { rows: tables } = await db.execute("SELECT * FROM tables ORDER BY COALESCE(created_at, updated_at, start_time), id");
       const { rows: players } = await db.execute(
-        "SELECT table_id, fid, is_ready FROM players ORDER BY table_id, seat_index ASC",
+        "SELECT table_id, fid, is_ready, is_bot FROM players ORDER BY table_id, seat_index ASC",
       );
 
       const playersByTable = players.reduce((acc: Record<string, any[]>, player: any) => {
@@ -530,7 +909,9 @@ export async function GET(request: Request) {
           ...table,
           ...getTableMetadata(table),
           player_count: tablePlayers.length,
-          ready_count: tablePlayers.filter((player) => Number(player.is_ready || 0) === 1).length,
+          ready_count: tablePlayers.filter(
+            (player) => !isBotPlayer(player) && Number(player.is_ready || 0) === 1,
+          ).length,
           normalized_status: getNormalizedLobbyStatus(table, tablePlayers.length),
           supports_ready_state: true,
           supports_table_creation: true,
@@ -649,7 +1030,7 @@ export async function POST(request: Request) {
       // below returns the hydrated table state.
     } else if (action === "join") {
       await db.execute({
-        sql: "DELETE FROM players WHERE table_id = ? AND fid != 1 AND (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', last_seen)) > 600",
+        sql: "DELETE FROM players WHERE table_id = ? AND is_bot = 0 AND (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', last_seen)) > 600",
         args: [effectiveTableId],
       });
 
@@ -660,7 +1041,7 @@ export async function POST(request: Request) {
       const isAlreadySeated = existingRows.length > 0;
 
       const { rows: currentPlayers } = await db.execute({
-        sql: "SELECT fid, seat_index FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+        sql: "SELECT fid, seat_index, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
         args: [effectiveTableId]
       });
       const playerCount = currentPlayers.length;
@@ -668,7 +1049,7 @@ export async function POST(request: Request) {
 
       if (
         effectiveTableId === "room_1" &&
-        currentPlayers.some((player) => Number(player.fid) !== 1 && Number(player.fid) !== fid)
+        currentPlayers.some((player) => !isBotPlayer(player) && Number(player.fid) !== fid)
       ) {
         return NextResponse.json(
           { success: false, error: "The practice opponent is already in a match" },
@@ -709,41 +1090,31 @@ export async function POST(request: Request) {
           args: [username || `User#${fid}`, pfp_url || "", fid, effectiveTableId],
         });
       } else {
-        await db.execute({
-          sql: "INSERT OR REPLACE INTO players (fid, username, pfp_url, table_id, seat_index, stack_size, hand, current_bet, status, is_ready, has_acted, total_invested, last_seen) VALUES (?, ?, ?, ?, ?, 5000, '', 0, 'waiting', 0, 0, 0, CURRENT_TIMESTAMP)",
-          args: [fid, username || `User#${fid}`, pfp_url || "", effectiveTableId, seatIndex]
-        });
+       await db.execute({
+         sql: "INSERT OR REPLACE INTO players (fid, username, pfp_url, table_id, seat_index, stack_size, hand, current_bet, status, is_bot, is_ready, has_acted, total_invested, last_seen) VALUES (?, ?, ?, ?, ?, 5000, '', 0, 'waiting', 0, 0, 0, 0, CURRENT_TIMESTAMP)",
+         args: [fid, username || `User#${fid}`, pfp_url || "", effectiveTableId, seatIndex]
+       });
       }
 
-      // Add Simulated AI opponent only if it's the Heads-Up GTO Match
-      if (effectiveTableId === "room_1") {
-        await db.execute({
-          sql: "INSERT OR IGNORE INTO players (fid, username, pfp_url, table_id, seat_index, stack_size, hand, current_bet, status, is_ready, has_acted, total_invested, last_seen) VALUES (1, 'PokerCoachJohnny', 'https://i.imgur.com/k2j4j3V.jpeg', ?, ?, 5000, '', 0, 'waiting', 0, 0, 0, CURRENT_TIMESTAMP)",
-          args: [effectiveTableId, 1]
-        });
-      }
+      await ensureAutoplayBot(effectiveTableId);
 
       // Get count of players in this room
       const { rows: players } = await db.execute({
-        sql: "SELECT fid FROM players WHERE table_id = ? ORDER BY seat_index ASC",
-        args: [effectiveTableId]
+       sql: "SELECT fid, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+       args: [effectiveTableId]
       });
       const seatedFids = players.map((player) => Number(player.fid));
 
-      const startTime = requestedTable.start_time
-        ? new Date(String(requestedTable.start_time)).getTime()
-        : null;
       if (
-        seatedFids.length >= 2 &&
-        startTime !== null &&
-        startTime <= Date.now() &&
-        (requestedTable.status !== "playing" || playerCount < 2)
+       shouldStartAutoplayHand(requestedTable, players) ||
+       (requestedTable.status === "playing" && playerCount < 2 && seatedFids.length >= 2)
       ) {
-        await dealNewHand(effectiveTableId, seatedFids);
+       await refreshAutoplayStartTime(effectiveTableId, players);
+       await dealNewHand(effectiveTableId, seatedFids);
       }
     } else if (action === "toggle_ready") {
       if (requestedTable.status === "playing") {
-        return NextResponse.json(
+       return NextResponse.json(
           { success: false, error: "Ready state can only be changed before a hand starts" },
           { status: 409 },
         );
@@ -767,11 +1138,12 @@ export async function POST(request: Request) {
         args: [nextReady, fid, effectiveTableId],
       });
 
+      await ensureAutoplayBot(effectiveTableId);
       const { rows: players } = await db.execute({
-        sql: "SELECT fid, is_ready FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+        sql: "SELECT fid, is_ready, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
         args: [effectiveTableId],
       });
-      const humanPlayers = players.filter((player: any) => Number(player.fid) !== 1);
+      const humanPlayers = players.filter((player: any) => !isBotPlayer(player));
       const readyHumans = humanPlayers.filter((player: any) => Number(player.is_ready || 0) === 1);
 
       if (
@@ -779,6 +1151,7 @@ export async function POST(request: Request) {
         humanPlayers.length > 0 &&
         readyHumans.length === humanPlayers.length
       ) {
+        await refreshAutoplayStartTime(effectiveTableId, players);
         await dealNewHand(
           effectiveTableId,
           players.map((player: any) => Number(player.fid)),
@@ -791,10 +1164,10 @@ export async function POST(request: Request) {
       });
 
       const { rows: remainingPlayers } = await db.execute({
-        sql: "SELECT fid, status FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+        sql: "SELECT fid, status, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
         args: [effectiveTableId],
       });
-      const humanPlayers = remainingPlayers.filter((player: any) => player.fid !== 1);
+      const humanPlayers = remainingPlayers.filter((player: any) => !isBotPlayer(player));
 
       if (humanPlayers.length === 0) {
         await db.execute({ sql: "DELETE FROM players WHERE table_id = ?", args: [effectiveTableId] });
@@ -946,106 +1319,12 @@ export async function POST(request: Request) {
            let nextPlayerFid = remainingActive[nextPlayerIndex].fid;
 
            await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [nextPlayerFid, table_id] });
-
-           // Trigger AI if next player is PokerCoachJohnny
-           if (nextPlayerFid === 1) {
-              const aiPlayer = remainingActive.find((p: any) => p.fid === 1);
-              if (!aiPlayer) {
-                throw new Error("Practice opponent is unavailable");
-              }
-              const aiCurrentBet = Number(aiPlayer.current_bet || 0);
-              const aiToCall = newTableBet - aiCurrentBet;
-              const aiDecision = evaluateAIAction(
-                String(aiPlayer.hand || ""),
-                String(currentGameState.board || ""),
-                aiToCall,
-                newPotSize,
-                Number(aiPlayer.stack_size || 0),
-                parseActionHistory(currentGameState.action_history),
-              );
-
-              await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = 1 AND table_id = ?", args: [table_id] });
-
-              if (
-                aiDecision.action === "raise" ||
-                aiDecision.action === "bet"
-              ) {
-                 const aiTargetBet = Math.max(
-                  newTableBet,
-                  Math.min(
-                    Number(aiPlayer.stack_size || 0) + aiCurrentBet,
-                    Number(aiDecision.targetBet || newTableBet),
-                  ),
-                 );
-                 const aiBetDiff = Math.max(0, aiTargetBet - aiCurrentBet);
-
-                 if (aiBetDiff > 0) {
-                  await db.execute({ sql: "UPDATE tables SET pot_size = pot_size + ?, current_bet = ? WHERE id = ?", args: [aiBetDiff, aiTargetBet, table_id] });
-                  await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = 1 AND table_id = ?", args: [aiBetDiff, aiTargetBet, aiBetDiff, table_id] });
-                  await db.execute({ sql: "UPDATE players SET has_acted = 0 WHERE table_id = ? AND status = 'playing' AND fid != 1", args: [table_id] });
-                  await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = 1 AND table_id = ?", args: [table_id] });
-                  await appendActionHistory(table_id, "ai", aiDecision.action, aiTargetBet);
-
-                  const { rows: activeAfterRaise } = await db.execute({ sql: "SELECT fid FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
-                  let aiCurrentIndex = activeAfterRaise.findIndex((r: any) => r.fid === 1);
-                  let aiNextIndex = (aiCurrentIndex + 1) % activeAfterRaise.length;
-                  let aiNextFid = activeAfterRaise[aiNextIndex].fid;
-                  await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [aiNextFid, table_id] });
-                 }
-              } else if (aiDecision.action === "call" || aiDecision.action === "check" || aiToCall === 0) {
-                 await db.execute({ sql: "UPDATE tables SET pot_size = pot_size + ? WHERE id = ?", args: [Math.max(0, aiToCall), table_id] });
-                 await db.execute({ sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = 1 AND table_id = ?", args: [Math.max(0, aiToCall), newTableBet, Math.max(0, aiToCall), table_id] });
-                 await appendActionHistory(
-                   table_id,
-                   "ai",
-                   aiToCall > 0 ? "call" : "check",
-                   aiToCall > 0 ? aiToCall : undefined,
-                 );
-                  
-                 const { rows: activeAfterAI } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id] });
-                 const aiStreetOver = activeAfterAI.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
-
-                 if (aiStreetOver) {
-                    const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [table_id] });
-                    await advanceGame(table_id, freshState[0]);
-                 } else {
-                    let aiCurrentIndex = activeAfterAI.findIndex((r: any) => r.fid === 1);
-                    let aiNextIndex = (aiCurrentIndex + 1) % activeAfterAI.length;
-                    let aiNextFid = activeAfterAI[aiNextIndex].fid;
-                    await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [aiNextFid, table_id] });
-                 }
-              } else {
-                 await db.execute({ sql: "UPDATE players SET status = 'folded' WHERE fid = 1 AND table_id = ?", args: [table_id]});
-                 await appendActionHistory(table_id, "ai", "fold");
-                 const { rows: rem } = await db.execute({ sql: "SELECT fid, current_bet, has_acted FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [table_id]});
-                 if (rem.length === 1) {
-                    await db.execute({ sql: "UPDATE players SET stack_size = stack_size + ? WHERE fid = ? AND table_id = ?", args: [newPotSize, rem[0].fid, table_id]});
-                    await db.execute({ sql: "UPDATE tables SET phase = 'showdown', pot_size = 0, current_bet = 0 WHERE id = ?", args: [table_id] });
-                    await resolveFoldWin(
-                      table_id,
-                      Number(rem[0].fid),
-                      newPotSize,
-                      String(currentGameState.board || ""),
-                      String(currentGameState.phase || "preflop"),
-                    );
-                 } else {
-                    const aiStreetOver = rem.every((p: any) => p.has_acted === 1 && p.current_bet === newTableBet);
-                    if (aiStreetOver) {
-                       const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [table_id] });
-                       await advanceGame(table_id, freshState[0]);
-                    } else {
-                       let oldAiIndex = remainingActive.findIndex((r: any) => r.fid === 1);
-                       let aiNextIndex = oldAiIndex % rem.length;
-                       let aiNextFid = rem[aiNextIndex].fid;
-                       await db.execute({ sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?", args: [aiNextFid, table_id] });
-                    }
-                 }
-              }
-           }
         }
       }
     }
 
+    await ensureAutoplayBot(effectiveTableId);
+    await runAutoplayUntilHuman(effectiveTableId);
     const response = await buildTableResponse(effectiveTableId);
     if (!response) {
       return NextResponse.json(

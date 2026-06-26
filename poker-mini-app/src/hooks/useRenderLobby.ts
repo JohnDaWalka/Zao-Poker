@@ -12,6 +12,7 @@ export type Seat = {
   user: UniversalUser | null;
   stack: number;
   isReady: boolean;
+  isBot: boolean;
 };
 
 export type PokerTable = {
@@ -57,6 +58,7 @@ type CurrentApiPlayer = {
   status?: "waiting" | "playing" | "folded" | "sitting_out";
   seat_index?: number;
   is_ready?: number;
+  is_bot?: number;
 };
 
 const env = getPublicEnv();
@@ -75,10 +77,13 @@ function mapStatus(
 }
 
 function mapPlayerToUniversalUser(player: CurrentApiPlayer): UniversalUser {
-  const isLikelyFarcaster = Number(player.fid) > 0;
+  const isBot = Number(player.is_bot || 0) === 1;
+  const isLikelyFarcaster = !isBot && Number(player.fid) > 0;
 
   return {
-    id: isLikelyFarcaster
+    id: isBot
+      ? `bot:${player.fid}`
+      : isLikelyFarcaster
       ? `fid:${player.fid}`
       : `guest:${player.fid}`,
     fid: Number(player.fid),
@@ -100,6 +105,7 @@ function mapCurrentApiTable(
     user: null,
     stack: 0,
     isReady: false,
+    isBot: false,
   }));
 
   for (const [fallbackIndex, player] of players.entries()) {
@@ -116,6 +122,7 @@ function mapCurrentApiTable(
       user: mapPlayerToUniversalUser(player),
       stack: Number(player.stack_size || 0),
       isReady: Number(player.is_ready || 0) === 1,
+      isBot: Number(player.is_bot || 0) === 1,
     };
   }
 
