@@ -15,6 +15,7 @@ const RANK_VALUES: Record<string, number> = {
  * category: 8=straight flush, 7=quads, 6=full house, 5=flush, 4=straight,
  * 3=trips, 2=two pair, 1=pair, 0=high card. */
 export type HandRank = number[];
+const HIGH_CARD_RANK = 0;
 
 function rankValue(card: Card): number {
   return RANK_VALUES[card[0]] ?? 0;
@@ -69,7 +70,7 @@ function evaluateFiveCardHand(cards: Card[]): HandRank {
     return [2, pairHigh, pairLow, groups[2][0]];
   }
   if (groups[0][1] === 2) return [1, groups[0][0], ...groups.slice(1).map((g) => g[0])];
-  return [0, ...values];
+  return [HIGH_CARD_RANK, ...values];
 }
 
 export function compareHandRanks(a: HandRank, b: HandRank): number {
@@ -84,7 +85,10 @@ export function compareHandRanks(a: HandRank, b: HandRank): number {
 /** Best 5-card hand out of all combinations of hole cards + board. */
 export function bestHandRank(holeCards: Card[], board: Card[]): HandRank {
   const allCards = [...holeCards, ...board].filter(Boolean);
-  if (allCards.length < 5) return evaluateFiveCardHand(allCards.slice(0, 5));
+  if (allCards.length < 5) {
+    const values = allCards.map(rankValue).sort((a, b) => b - a);
+    return [HIGH_CARD_RANK, ...values];
+  }
 
   let best: HandRank | null = null;
   for (const combo of combinations(allCards, 5)) {

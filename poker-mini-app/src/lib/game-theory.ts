@@ -103,6 +103,14 @@ function normalizeCard(card: string): Card {
   return `${trimmed[0].toUpperCase()}${trimmed[1].toLowerCase()}`;
 }
 
+function normalizeSpot(rawSpot: SolverSpot): SolverSpot {
+  return {
+    ...rawSpot,
+    holeCards: rawSpot.holeCards.map(normalizeCard),
+    boardCards: (rawSpot.boardCards ?? []).map(normalizeCard),
+  };
+}
+
 function detectStreet(boardCards: Card[]): SolverAnalysis["street"] {
   if (boardCards.length >= 5) return "river";
   if (boardCards.length === 4) return "turn";
@@ -271,8 +279,8 @@ function sampleTrialContext(
   spot: SolverSpot,
   opponentRangeProfile: OpponentRangeProfile,
 ): TrialContext {
-  const heroCards = spot.holeCards.map(normalizeCard);
-  const boardCards = (spot.boardCards ?? []).map(normalizeCard);
+  const heroCards = spot.holeCards;
+  const boardCards = spot.boardCards ?? [];
   const opponentCount = Math.max(1, Math.floor(spot.opponentCount ?? 1));
   const deadCards = new Set([...heroCards, ...boardCards]);
   let availableDeck = FULL_DECK.filter((card) => !deadCards.has(card));
@@ -299,7 +307,7 @@ function sampleTrialContext(
   };
 }
 
-export function runMonteCarloEquity(spot: SolverSpot): MonteCarloResult {
+function runMonteCarloEquityNormalized(spot: SolverSpot): MonteCarloResult {
   const opponentRangeProfile = inferOpponentRangeProfile(spot);
   const trials = Math.max(180, Math.floor(spot.trials ?? 500));
   let wins = 0;
@@ -321,6 +329,10 @@ export function runMonteCarloEquity(spot: SolverSpot): MonteCarloResult {
     trials,
     opponentRangeProfile,
   };
+}
+
+export function runMonteCarloEquity(rawSpot: SolverSpot): MonteCarloResult {
+  return runMonteCarloEquityNormalized(normalizeSpot(rawSpot));
 }
 
 function estimateAggressiveSizing(spot: SolverSpot, action: SolverAction) {
@@ -380,7 +392,7 @@ function simulateActionTreeEv(
   opponentRangeProfile: OpponentRangeProfile,
   trials: number,
 ) {
-  const street = detectStreet((spot.boardCards ?? []).map(normalizeCard));
+  const street = detectStreet(spot.boardCards ?? []);
   if (action === "fold") {
     return 0;
   }
@@ -465,8 +477,9 @@ function emptyActionMap(actions: SolverAction[]) {
   );
 }
 
-export function analyzeHoldemSpot(spot: SolverSpot): SolverAnalysis {
-  const monteCarlo = runMonteCarloEquity(spot);
+export function analyzeHoldemSpot(rawSpot: SolverSpot): SolverAnalysis {
+  const spot = normalizeSpot(rawSpot);
+  const monteCarlo = runMonteCarloEquityNormalized(spot);
   const actions = chooseActions(spot);
   const infoSet = createInfoSet(
     spot,
@@ -532,7 +545,9 @@ export function analyzeHoldemSpot(spot: SolverSpot): SolverAnalysis {
     Math.max(...actions.map((action) => actionEvs[action])) - expectedValue,
   );
   const potOdds =
-    spot.toCall > 0 ? spot.toCall / Math.max(spot.potSize + spot.toCall, 1) : 0;
+    spot.toCall > 0
+      ? spot.toCall / Math.max(spot.potSize + spot.toCall, 1)
+      : 0;
 
   const recommendations = actions
     .filter((action) => strategySum[action] >= 0.05)
@@ -553,7 +568,7 @@ export function analyzeHoldemSpot(spot: SolverSpot): SolverAnalysis {
     }));
 
   const tags = [
-    detectStreet((spot.boardCards ?? []).map(normalizeCard)),
+    detectStreet(spot.boardCards),
     bucketHandStrength(monteCarlo.equity),
     bucketPressure(spot.toCall, spot.potSize),
     bucketSpr(spot.stackSize, spot.potSize),
@@ -563,7 +578,7 @@ export function analyzeHoldemSpot(spot: SolverSpot): SolverAnalysis {
 
   return {
     infoSet,
-    street: detectStreet((spot.boardCards ?? []).map(normalizeCard)),
+    street: detectStreet(spot.boardCards),
     potOdds,
     equity: monteCarlo.equity,
     winRate: monteCarlo.winRate,

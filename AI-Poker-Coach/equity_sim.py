@@ -4,11 +4,26 @@ and hand evaluation integration.
 """
 
 import random
-from poker_engine import Card, HandEvaluator, PokerGame, Deck, Rank, Suit
-from typing import List, Tuple, Set
+from poker_engine import Card, HandEvaluator, Rank, Suit
+from typing import List, Set, Tuple
 
 RANKS = '23456789TJQKA'
 SUITS = 'shdc'  # spades, hearts, diamonds, clubs
+# Module-level: pre-compute all 52 cards instead of instantiating a deck in hot loops.
+FULL_DECK_STATIC: List[Card] = [Card(rank, suit) for rank in Rank for suit in Suit]
+_ALL_TWO_CARD_COMBOS: List[str] = []
+
+
+def _get_available_cards(dead_cards: Set[Card]) -> List[Card]:
+    """Return all cards not in dead_cards."""
+    return [card for card in FULL_DECK_STATIC if card not in dead_cards]
+
+for first_index, first_card in enumerate(FULL_DECK_STATIC):
+    for second_card in FULL_DECK_STATIC[first_index + 1:]:
+        _ALL_TWO_CARD_COMBOS.append(
+            f"{first_card.rank.symbol}{first_card.suit.name[0].lower()}"
+            f"{second_card.rank.symbol}{second_card.suit.name[0].lower()}"
+        )
 
 
 def parse_range(hand_range: str) -> List[str]:
@@ -16,6 +31,13 @@ def parse_range(hand_range: str) -> List[str]:
     Parse a hand range string into specific card combinations.
     Examples: "AKs" -> all suited AK combos, "22" -> all pocket deuces
     """
+    hand_range = hand_range.strip()
+    if hand_range.lower() == "random":
+        return list(_ALL_TWO_CARD_COMBOS)
+
+    if len(hand_range) < 2:
+        raise ValueError(f"Invalid range notation: {hand_range!r}")
+
     res = []
     
     # Check if it's suited or offsuit
@@ -89,9 +111,7 @@ def run_sim(hand1: Tuple[Card, Card], hand2: Tuple[Card, Card],
     # Get all used cards
     used_cards = set(hand1 + hand2 + board)
     
-    # Create deck and remove used cards
-    deck = Deck()
-    available = [c for c in deck.cards if c not in used_cards]
+    available = _get_available_cards(used_cards)
     
     # Deal remaining board cards if needed
     cards_needed = 5 - len(board)
@@ -187,8 +207,8 @@ def calculate_equity_fast(hand1_combos: List[str], hand2_combos: List[str],
     total = h1_wins + h2_wins + ties
     if total == 0:
         return {'error': 'No valid simulations'}
-    
-    return {
+
+    result = {
         'hand1_equity': round((h1_wins + ties * 0.5) / total * 100, 2),
         'hand2_equity': round((h2_wins + ties * 0.5) / total * 100, 2),
         'hand1_wins': h1_wins,
@@ -196,6 +216,16 @@ def calculate_equity_fast(hand1_combos: List[str], hand2_combos: List[str],
         'ties': ties,
         'total_trials': total
     }
+
+    skip_rate = 1.0 - (total / trials)
+    if skip_rate > 0.5:
+        result['warning'] = (
+            f'High conflict rate ({skip_rate:.0%}) - ranges overlap heavily. '
+            'Equity values are based on the non-conflicting trials only.'
+        )
+        result['skip_rate'] = round(skip_rate, 4)
+
+    return result
 
 
 def range_vs_range(range1_str: str, range2_str: str, 
@@ -217,6 +247,37 @@ def range_vs_range(range1_str: str, range2_str: str,
     result['range2_combos'] = len(combos2)
     
     return result
+
+
+def hero_vs_random_opponent(
+    hero_cards: List[str],
+    board_strs: List[str] | None = None,
+    trials: int = 1000,
+) -> dict:
+    """
+    Calculate equity for an exact hero hand versus a random opponent hand.
+    """
+    if not hero_cards or len(hero_cards) != 2:
+        return {"error": "hero_cards must be exactly 2 card strings"}
+    if trials < 100:
+        return {"error": "trials must be at least 100"}
+    if trials > 100000:
+        print(f"Warning: {trials} trials is very high, may be slow")
+
+    hero_combo = "".join(hero_cards)
+    result = calculate_equity_fast([hero_combo], parse_range("random"), board_strs, trials)
+    if "error" in result:
+        return result
+
+    return {
+        "hero_equity": result["hand1_equity"],
+        "villain_equity": result["hand2_equity"],
+        "hero_wins": result["hand1_wins"],
+        "villain_wins": result["hand2_wins"],
+        "ties": result["ties"],
+        "total_trials": result["total_trials"],
+        "hero_hand": hero_combo,
+    }
 
 
 def multi_way_equity(ranges: List[str], board_strs: List[str] = None, 
@@ -286,8 +347,7 @@ def multi_way_equity(ranges: List[str], board_strs: List[str] = None,
             continue
         
         # Complete the board
-        deck = Deck()
-        available = [c for c in deck.cards if c not in all_cards_used]
+        available = _get_available_cards(all_cards_used)
         cards_needed = 5 - len(board)
         if cards_needed > 0:
             dealt_cards = random.sample(available, cards_needed)
