@@ -83,6 +83,22 @@ function formatCards(cards: string[]) {
   return cards.length > 0 ? cards.join(" ") : "—";
 }
 
+function getCardDisplay(card: string) {
+  if (!card || card.length < 2) {
+    return { rank: "", suitSymbol: "", isRed: false };
+  }
+
+  const rank = card[0] === "T" ? "10" : card[0];
+  const suit = card[1];
+
+  if (suit === "h") return { rank, suitSymbol: "♥", isRed: true };
+  if (suit === "d") return { rank, suitSymbol: "♦", isRed: true };
+  if (suit === "c") return { rank, suitSymbol: "♣", isRed: false };
+  if (suit === "s") return { rank, suitSymbol: "♠", isRed: false };
+
+  return { rank, suitSymbol: "", isRed: false };
+}
+
 function formatStartTime(startTime?: string | null) {
   if (!startTime) {
     return "Open seating";
@@ -1247,6 +1263,7 @@ function TableView({
   const isPlayersTurn = table.currentTurnFid === userFid;
   const canAct = Boolean(currentSeat) && table.status === "in_game" && isPlayersTurn;
   const isShowdown = table.phase === "showdown";
+  const heroCards = currentSeat?.holeCards ?? [];
 
   const visibleMessages = useMemo(
     () => chat.messages.filter((message) => !chat.mutedFids.includes(message.fid)),
@@ -1421,6 +1438,60 @@ function TableView({
             </small>
           </div>
         ))}
+      </section>
+
+      <section className="ls-table-cards-grid">
+        <article className="ls-card-strip-panel">
+          <div className="ls-card-strip-header">
+            <strong>Board</strong>
+            <small>{table.phase === "preflop" ? "Waiting for flop" : table.phase}</small>
+          </div>
+          {table.board.length === 0 ? (
+            <div className="ls-card-strip-empty">No community cards yet.</div>
+          ) : (
+            <div className="ls-playing-cards-row">
+              {table.board.map((card, index) => {
+                const { rank, suitSymbol, isRed } = getCardDisplay(card);
+                return (
+                  <div
+                    key={`${card}-${index}`}
+                    className={isRed ? "ls-playing-card red" : "ls-playing-card"}
+                  >
+                    {rank}
+                    {suitSymbol}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </article>
+
+        <article className="ls-card-strip-panel">
+          <div className="ls-card-strip-header">
+            <strong>Your hand</strong>
+            <small>{currentSeat ? `${formatCurrency(currentStack)} stack` : "Take a seat to get dealt in."}</small>
+          </div>
+          {!currentSeat ? (
+            <div className="ls-card-strip-empty">No seat yet.</div>
+          ) : heroCards.length === 0 ? (
+            <div className="ls-card-strip-empty">Waiting for hole cards...</div>
+          ) : (
+            <div className="ls-playing-cards-row">
+              {heroCards.map((card, index) => {
+                const { rank, suitSymbol, isRed } = getCardDisplay(card);
+                return (
+                  <div
+                    key={`${card}-${index}`}
+                    className={isRed ? "ls-playing-card red" : "ls-playing-card"}
+                  >
+                    {rank}
+                    {suitSymbol}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </article>
       </section>
 
       <section className="ls-table-info-grid">
