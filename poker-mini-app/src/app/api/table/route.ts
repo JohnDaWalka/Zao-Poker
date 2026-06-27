@@ -175,6 +175,17 @@ function evaluateAIAction(
     trials: 320,
   });
 
+  // Practice-room AI: the solver folds far too often, which ends hands before the
+  // user gets to play streets. Soften that into a "calling station" that still
+  // folds to large bets (worse than even-money pot odds) so play stays realistic
+  // while most hands still see flop/turn/river.
+  if (analysis.recommendedAction === "fold" && toCall > 0) {
+    const facingLargeBet = toCall > potSize; // worse than 1:1 to call
+    if (!facingLargeBet) {
+      return { action: "call", targetBet: null };
+    }
+  }
+
   if (analysis.recommendedAction === "raise" || analysis.recommendedAction === "bet") {
     const targetBet = Math.min(
       stackSize,
@@ -270,6 +281,8 @@ async function dealNewHand(tableId: string, fids: number[]) {
     sql: "UPDATE tables SET pot_size = ?, current_bet = ?, board = '', deck = ?, action_history = '', phase = 'preflop', status = 'playing', current_turn_fid = ?, last_aggressor_fid = ?, turn_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     args: [potSize, highestPostedBlind, deckStr, currentTurnFid, lastAggressorFid, tableId]
   });
+
+  console.log(`[poker:${tableId}] dealNewHand: preflop started. blinds sb=${blinds.sb} bb=${blinds.bb} ante=${blinds.ante} pot=${potSize} firstToAct=${currentTurnFid}`);
 }
 
 // Advance game to next street
@@ -280,6 +293,8 @@ async function advanceGame(tableId: string, currentState: any) {
 
   const deck = deckStr ? deckStr.split(",") : [];
   const board = boardStr ? boardStr.split(",") : [];
+
+  console.log(`[poker:${tableId}] advanceGame: ${phase} -> dealing next street (current board cards: ${board.length})`);
 
   // Reset betting and has_acted for the next street
   await db.execute({
@@ -305,6 +320,8 @@ async function advanceGame(tableId: string, currentState: any) {
     nextPhase = 'showdown';
   }
 
+  console.log(`[poker:${tableId}] dealt to ${nextPhase}, board now has ${board.length} cards`);
+
   // Determine next player to act post-flop: first active seat (left of button/SB).
   // In heads-up the BB (seat 1 = index 1) is OOP and acts first post-flop, so
   // we pick index 1 for 2 players; for 3+ players we always start from seat 0.
@@ -329,6 +346,7 @@ async function advanceGame(tableId: string, currentState: any) {
   // hands or crediting the pot to a winner — fix that here so the pot
   // always resolves to someone's stack, and log the result for stats.
   if (nextPhase === "showdown") {
+    console.log(`[poker:${tableId}] showdown reached, resolving pot`);
     await resolveShowdown(tableId, Number(currentState.pot_size || 0), board.join(","));
   }
 }
@@ -643,7 +661,7 @@ async function playAutomatedTurn(tableId: string) {
       args: [tableId],
     });
     const aiStreetOver = activeAfterAI.every(
-      (player: any) => Number(player.has_acted || 0) === 1 && Number(player.current_bet || 0) === newTableBet,
+      (player: any) => Number(player.has_acted || 0) === 1 && Number(player.current_bet || 0) === Number(newTableBet || 0),
     );
 
     if (aiStreetOver) {
@@ -695,7 +713,7 @@ async function playAutomatedTurn(tableId: string) {
   }
 
   const aiStreetOver = rem.every(
-    (player: any) => Number(player.has_acted || 0) === 1 && Number(player.current_bet || 0) === newTableBet,
+    (player: any) => Number(player.has_acted || 0) === 1 && Number(player.current_bet || 0) === Number(newTableBet || 0),
   );
   if (aiStreetOver) {
     const { rows: freshState } = await db.execute({
@@ -945,7 +963,9 @@ export async function GET(request: Request) {
       }
 
       await runAutoplayUntilHuman(tableId, AUTOPLAY_MAX_TURNS);
-      await maybeAutoDealPracticeHand(tableId);
+      // Auto-deal for practice room is now primarily driven by explicit user action
+      // ("Start Next Hand") to avoid stealing the result of the previous hand.
+      // await maybeAutoDealPracticeHand(tableId);
 
       const response = await buildTableResponse(tableId);
       if (!response) {
@@ -1443,7 +1463,7 @@ export async function POST(request: Request) {
             args: [newPotSize, newTableBet, effectiveTableId]
           });
         }
-        
+
         // Mark this player as having acted.
         await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = ? AND table_id = ?", args: [fid, effectiveTableId] });
 
@@ -1467,7 +1487,7 @@ export async function POST(request: Request) {
 
         const { rows: remainingActive } = await db.execute({ sql: "SELECT fid, current_bet, has_acted, hand FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC", args: [effectiveTableId] });
         
-        const streetOver = remainingActive.every((p: any) => Number(p.has_acted || 0) === 1 && Number(p.current_bet || 0) === newTableBet);
+        const streetOver = remainingActive.every((p: any) => Number(p.has_acted || 0) === 1 && Number(p.current_bet || 0) === Number(newTableBet || 0));
 
         if (streetOver) {
           const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [effectiveTableId] });
@@ -1484,7 +1504,14 @@ export async function POST(request: Request) {
 
     await ensureAutoplayBot(effectiveTableId);
     await runAutoplayUntilHuman(effectiveTableId, AUTOPLAY_MAX_TURNS);
-    await maybeAutoDealPracticeHand(effectiveTableId);
+
+    // Do NOT auto-deal the next hand here after a user action.
+    // This was causing the hand the user just bet on to be immediately replaced
+    // by a new hand in the response, making cards and the result of the action
+    // "disappear". The UI has an explicit "Start Next Hand" at showdown,
+    // and GETs can still trigger auto for practice flow if desired.
+    // await maybeAutoDealPracticeHand(effectiveTableId);
+
     const response = await buildTableResponse(effectiveTableId);
     if (!response) {
       return NextResponse.json(

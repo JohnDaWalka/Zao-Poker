@@ -215,10 +215,56 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     }
 
     appliedStateVersionRef.current = version;
-    setState({
-      tables,
-      updatedAt: Date.now(),
+
+    setState((current) => {
+      // Merge to protect detailed poker state (board, phase, holeCards, currentTurn, pot, seats)
+      // from being overwritten by summary/lobby data that may arrive from WS or broad refreshes.
+      // Prefer the richer table (more seated players, non-empty board/hands, or explicit currentTurn).
+      // Additionally, always protect the current user's own holeCards if they would be lost.
+      const merged = tables.map((incoming) => {
+        const existing = current.tables.find((t) => t.id === incoming.id);
+        if (!existing) return incoming;
+
+        const incomingSeated = incoming.seats.filter((s) => s.user).length;
+        const existingSeated = existing.seats.filter((s) => s.user).length;
+        const incomingHasBoard = incoming.board.length > 0;
+        const existingHasBoard = existing.board.length > 0;
+        const incomingHasTurn = !!incoming.currentTurnFid;
+        const existingHasTurn = !!existing.currentTurnFid;
+        const incomingHasHands = incoming.seats.some((s) => s.holeCards.length > 0);
+        const existingHasHands = existing.seats.some((s) => s.holeCards.length > 0);
+
+        let preferExisting =
+          existingSeated > incomingSeated ||
+          (!incomingHasBoard && existingHasBoard) ||
+          (!incomingHasTurn && existingHasTurn) ||
+          (existingHasBoard && !incomingHasHands && existingHasHands);
+
+        // Extra protection: don't let the current user's hole cards disappear
+        if (currentFid != null) {
+          const existingSeat = existing.seats.find((s) => s.user?.fid === currentFid);
+          const incomingSeat = incoming.seats.find((s) => s.user?.fid === currentFid);
+          if (existingSeat && existingSeat.holeCards.length > 0) {
+            if (!incomingSeat || incomingSeat.holeCards.length === 0) {
+              preferExisting = true;
+            }
+          }
+        }
+
+        if (preferExisting) {
+          // If we decide to keep existing but incoming has some updates (e.g. new board or bets),
+          // we could merge more smartly, but for now just keep full existing to avoid losing cards.
+          return existing;
+        }
+        return incoming;
+      });
+
+      return {
+        tables: merged,
+        updatedAt: Date.now(),
+      };
     });
+
     setStatus("connected");
     setError(null);
     return true;
@@ -373,7 +419,26 @@ export function useRenderLobby(currentUser?: UniversalUser) {
           const message = JSON.parse(event.data) as ServerMessage;
 
           if (message.type === "state") {
-            setState(message.payload);
+            // Merge WS lobby state the same way as snapshots to protect detailed
+            // poker table state (phase, board, seats/hole cards, pot, turn etc.)
+            // from summary payloads that lack the full per-table game data.
+            setState((current) => {
+              const incomingTables: PokerTable[] = message.payload?.tables ?? [];
+              const merged = incomingTables.map((incoming) => {
+                const existing = current.tables.find((t) => t.id === incoming.id);
+                if (!existing) return incoming;
+                const incomingSeated = incoming.seats.filter((s) => s.user).length;
+                const existingSeated = existing.seats.filter((s) => s.user).length;
+                const incomingHasBoard = incoming.board.length > 0;
+                const existingHasBoard = existing.board.length > 0;
+                const preferExisting =
+                  existingSeated > incomingSeated ||
+                  (!incomingHasBoard && existingHasBoard) ||
+                  (existing.board.length > 0 && incoming.seats.every(s => s.holeCards.length === 0));
+                return preferExisting ? existing : incoming;
+              });
+              return { tables: merged, updatedAt: Date.now() };
+            });
             setError(null);
           } else if (message.type === "error") {
             setError(message.payload.message);
@@ -422,9 +487,13 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
   const joinTable = useCallback(
     async (tableId: string, user: UniversalUser) => {
+      // Always perform the local DB join so that seating, stacks, and full
+      // poker state (board, phase, hole cards, currentTurn, pot, etc.) are
+      // persisted in the Turso used by /api/table. This ensures the displayed
+      // table vars stay shown after joining from the lobby.
+      // If using an external Render lobby, also notify it for presence.
       if (env.hasRenderLobby) {
         send({ type: "join_table", payload: { tableId, user } });
-        return true;
       }
 
       try {
@@ -463,7 +532,6 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     async (tableId: string, user: UniversalUser) => {
       if (env.hasRenderLobby) {
         send({ type: "leave_table", payload: { tableId, user } });
-        return;
       }
 
       try {
@@ -542,7 +610,6 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     async (tableId: string, user: UniversalUser) => {
       if (env.hasRenderLobby) {
         send({ type: "toggle_ready", payload: { tableId, user } });
-        return true;
       }
 
       try {
@@ -582,9 +649,11 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       action: "fold" | "check" | "call" | "bet" | "raise" | "all_in",
       amount = 0,
     ) => {
+      // Always drive game actions through the local /api/table (the source of
+      // truth for street-by-street state, pots, hands, currentTurn etc.).
+      // Notify external lobby (if any) for side effects.
       if (env.hasRenderLobby) {
-        setError("Live hand actions currently require the direct API mode.");
-        return false;
+        send({ type: "table_action", payload: { tableId, user, action, amount } });
       }
 
       try {
@@ -621,8 +690,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
   const dealTableHand = useCallback(
     async (tableId: string, user: UniversalUser) => {
       if (env.hasRenderLobby) {
-        setError("Starting the next hand currently requires the direct API mode.");
-        return false;
+        send({ type: "deal_hand", payload: { tableId, user } });
       }
 
       try {

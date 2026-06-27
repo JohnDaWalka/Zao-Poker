@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   usePokerProductData,
   type AnalyticsData,
@@ -218,6 +218,9 @@ export default function LeakSnipeUniversalUI() {
   const [statusFilter, setStatusFilter] = useState<"all" | TableStatus>("all");
   const [gameFilter, setGameFilter] = useState<"all" | GameType>("all");
   const lobby = useRenderLobby(user);
+
+  // Keep last good active table to prevent UI from switching to another table or empty state on transient poll/refresh
+  const lastGoodActiveTableRef = useRef<PokerTable | null>(null);
   const clubs = usePokerClubs(user, selectedClubId);
   const productData = usePokerProductData(user.fid, user.authSource);
 
@@ -236,7 +239,9 @@ export default function LeakSnipeUniversalUI() {
   }, [gameFilter, lobbySearch, statusFilter, tables]);
 
   const activeTable = useMemo(() => {
-    return tables.find((table) => table.id === activeTableId) ?? tables[0] ?? null;
+    const found = tables.find((table) => table.id === activeTableId);
+    if (found) return found;
+    return lastGoodActiveTableRef.current || null;
   }, [activeTableId, tables]);
 
   const seatedTable = useMemo(() => {
@@ -265,6 +270,13 @@ export default function LeakSnipeUniversalUI() {
       setActiveTableId(tables[0].id);
     }
   }, [activeTableId, seatedTable, tables]);
+
+  useEffect(() => {
+    const found = tables.find((t) => t.id === activeTableId);
+    if (found && (found.board.length > 0 || found.seats.some((s) => s.user?.fid === user.fid && s.holeCards.length > 0))) {
+      lastGoodActiveTableRef.current = found;
+    }
+  }, [activeTableId, tables, user.fid]);
 
   useEffect(() => {
     if (!selectedClubId && clubs.clubs[0]) {
@@ -1266,6 +1278,47 @@ function TableView({
   const heroCards = currentSeat?.holeCards ?? [];
   const opponentSeats = table.seats.filter((seat) => seat.user && seat.user.fid !== userFid);
 
+  // Sticky state to prevent hole cards and board from disappearing on state updates / polling overwrites
+  // Once we have seen them for this hand, keep them visible even if a subsequent state update has empty values.
+  const lastBoardRef = useRef<string[]>([]);
+  const lastHeroCardsRef = useRef<string[]>([]);
+
+  // A new hand begins at preflop with no community cards, so don't let the
+  // previous hand's board "stick". Only fall back to the cached board on
+  // postflop streets, where a transient empty poll would otherwise blank it.
+  const displayBoard =
+    table.board.length > 0
+      ? table.board
+      : table.phase === "preflop"
+        ? []
+        : lastBoardRef.current;
+  const displayHeroCards =
+    heroCards.length > 0 ? heroCards : lastHeroCardsRef.current;
+
+  // Cache the latest non-empty values after commit (don't mutate refs during render).
+  useEffect(() => {
+    if (table.phase === "preflop") {
+      lastBoardRef.current = [];
+    } else if (table.board.length > 0) {
+      lastBoardRef.current = table.board;
+    }
+  }, [table.phase, table.board]);
+
+  useEffect(() => {
+    if (heroCards.length > 0) lastHeroCardsRef.current = heroCards;
+  }, [heroCards]);
+
+  // NLHE raise amount with slider (not fixed limit)
+  const minRaise = toCall > 0 
+    ? table.currentBet + Math.max(1, toCall) 
+    : Math.max(1, Math.floor(table.potSize * 0.5) || 1);
+  const maxRaise = currentStack + (toCall > 0 ? (currentSeat?.currentBet || 0) : 0);
+  const [raiseAmount, setRaiseAmount] = useState(minRaise);
+
+  useEffect(() => {
+    setRaiseAmount(Math.max(minRaise, Math.min(maxRaise, raiseAmount || minRaise)));
+  }, [minRaise, maxRaise, table.id, isPlayersTurn]);
+
   const visibleMessages = useMemo(
     () => chat.messages.filter((message) => !chat.mutedFids.includes(message.fid)),
     [chat.messages, chat.mutedFids],
@@ -1419,11 +1472,11 @@ function TableView({
             <strong>Board</strong>
             <small>{table.phase === "preflop" ? "Waiting for flop" : table.phase}</small>
           </div>
-          {table.board.length === 0 ? (
+          {displayBoard.length === 0 ? (
             <div className="ls-card-strip-empty">No community cards yet.</div>
           ) : (
             <div className="ls-playing-cards-row">
-              {table.board.map((card, index) => {
+              {displayBoard.map((card, index) => {
                 const { rank, suitSymbol, isRed } = getCardDisplay(card);
                 return (
                   <div
@@ -1500,11 +1553,11 @@ function TableView({
           </div>
           {!currentSeat ? (
             <div className="ls-card-strip-empty">No seat yet.</div>
-          ) : heroCards.length === 0 ? (
+          ) : displayHeroCards.length === 0 ? (
             <div className="ls-card-strip-empty">Waiting for hole cards...</div>
           ) : (
             <div className="ls-playing-cards-row">
-              {heroCards.map((card, index) => {
+              {displayHeroCards.map((card, index) => {
                 const { rank, suitSymbol, isRed } = getCardDisplay(card);
                 return (
                   <div
@@ -1541,6 +1594,32 @@ function TableView({
                 : `To call ${formatCurrency(toCall)} · Stack ${formatCurrency(currentStack)}`}
             </small>
           </div>
+
+          {canAct && (
+            <div style={{ margin: '8px 0', padding: '8px', background: '#111', borderRadius: '4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <label>Raise/Bet amount (NLHE):</label>
+                <input 
+                  type="number" 
+                  value={raiseAmount} 
+                  min={minRaise} 
+                  max={maxRaise}
+                  onChange={e => setRaiseAmount(Math.max(minRaise, Math.min(maxRaise, parseInt(e.target.value) || minRaise)))}
+                  style={{ width: '80px' }}
+                />
+              </div>
+              <input 
+                type="range" 
+                min={minRaise} 
+                max={maxRaise} 
+                step="1"
+                value={raiseAmount} 
+                onChange={e => setRaiseAmount(parseInt(e.target.value))}
+                style={{ width: '100%' }}
+              />
+              <div style={{ fontSize: '10px', color: '#888' }}>Min: {minRaise} | Max: {maxRaise} (stack)</div>
+            </div>
+          )}
 
           {isShowdown ? (
             <button
@@ -1589,23 +1668,15 @@ function TableView({
                     <button
                       className="ls-secondary-button"
                       disabled={actionLoading !== null}
-                      onClick={() => void submitAction("bet", 100)}
+                      onClick={() => { const amt = minRaise; setRaiseAmount(amt); void submitAction("bet", amt); }}
                       type="button"
                     >
-                      Bet 2BB
+                      Bet Min
                     </button>
                     <button
                       className="ls-secondary-button"
                       disabled={actionLoading !== null}
-                      onClick={() => void submitAction("bet", 150)}
-                      type="button"
-                    >
-                      Bet 3BB
-                    </button>
-                    <button
-                      className="ls-secondary-button"
-                      disabled={actionLoading !== null}
-                      onClick={() => void submitAction("bet", Math.max(1, table.potSize))}
+                      onClick={() => { const pot = Math.min(maxRaise, Math.max(1, table.potSize)); setRaiseAmount(pot); void submitAction("bet", pot); }}
                       type="button"
                     >
                       Bet Pot
@@ -1616,15 +1687,7 @@ function TableView({
                     <button
                       className="ls-secondary-button"
                       disabled={actionLoading !== null}
-                      onClick={() => void submitAction("raise", table.currentBet + 100)}
-                      type="button"
-                    >
-                      Raise +100
-                    </button>
-                    <button
-                      className="ls-secondary-button"
-                      disabled={actionLoading !== null}
-                      onClick={() => void submitAction("raise", table.currentBet * 2)}
+                      onClick={() => { const amt = minRaise; setRaiseAmount(amt); void submitAction("raise", amt); }}
                       type="button"
                     >
                       Min Raise
@@ -1632,7 +1695,7 @@ function TableView({
                     <button
                       className="ls-secondary-button"
                       disabled={actionLoading !== null}
-                      onClick={() => void submitAction("raise", table.potSize + toCall * 2)}
+                      onClick={() => { const p = Math.min(maxRaise, Math.max(minRaise, table.potSize + toCall)); setRaiseAmount(p); void submitAction("raise", p); }}
                       type="button"
                     >
                       Raise Pot
@@ -1646,6 +1709,14 @@ function TableView({
                   type="button"
                 >
                   All In
+                </button>
+                <button
+                  className="ls-primary-button"
+                  disabled={actionLoading !== null}
+                  onClick={() => void submitAction(toCall > 0 ? "raise" : "bet", raiseAmount)}
+                  type="button"
+                >
+                  {toCall > 0 ? "Raise" : "Bet"} to {raiseAmount} (slider)
                 </button>
               </div>
             </>
