@@ -38,12 +38,12 @@ export function HomeTab() {
   // Navigation states
   const [gameState, setGameState] = useState<"lobby" | "table">("lobby");
   const [selectedTableId, setSelectedTableId] = useState<string>("");
-  
+
   // Lobby states
   const [lobbyTables, setLobbyTables] = useState<TableData[]>([]);
   const [joinError, setJoinError] = useState<string>("");
   const [joiningTableId, setJoiningTableId] = useState<string | null>(null);
-  
+
   // Active table states
   const [tableStatus, setTableStatus] = useState<string>("waiting");
   const [tableName, setTableName] = useState<string>("");
@@ -58,7 +58,8 @@ export function HomeTab() {
   const [potSize, setPotSize] = useState(0);
   const [playerStack, setPlayerStack] = useState(5000);
   const [coachFeedback, setCoachFeedback] = useState<any>(null);
-  
+  const [lastHandResult, setLastHandResult] = useState<"win" | "loss" | "split" | null>(null);
+
   // Game loop states
   const [board, setBoard] = useState<string[]>([]);
   const [playerCards, setPlayerCards] = useState<string[]>([]);
@@ -71,7 +72,7 @@ export function HomeTab() {
   const [isTrainingMode, setIsTrainingMode] = useState(false);
 
   // Blind states
-  const [currentBlinds, setCurrentBlinds] = useState<{sb: number, bb: number, ante: number} | null>(null);
+  const [currentBlinds, setCurrentBlinds] = useState<{ sb: number, bb: number, ante: number } | null>(null);
   const [nextLevelInSecs, setNextLevelInSecs] = useState<number>(0);
 
   // 1. Poll Lobby list
@@ -99,43 +100,20 @@ export function HomeTab() {
   // 2. Poll Active Table / Waiting Room state
   useEffect(() => {
     if (gameState !== "table" || !selectedTableId) return;
+    const myFid = Number(universalUser.fid);
     const fetchTableState = async () => {
       try {
-        const userFid = universalUser.fid;
-        const res = await fetch(`/api/table?table_id=${selectedTableId}&fid=${userFid}`);
+        const res = await fetch(`/api/table?table_id=${selectedTableId}&fid=${myFid}`);
         const data = await res.json();
         if (data.success && data.gameState) {
-          setTableName(data.gameState.name);
-          setMaxPlayers(data.gameState.max_players);
-          setTableStatus(data.gameState.status);
-          setStartTime(data.gameState.start_time);
-          setPotSize(data.gameState.pot_size);
-          setPhase(data.gameState.phase);
-          setCurrentBet(data.gameState.current_bet || 0);
-          setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
-          setTableActionHistory(
-            data.gameState.action_history
-              ? String(data.gameState.action_history).split("|").filter(Boolean)
-              : []
-          );
-          setSeatedPlayers(data.players || []);
-          setCurrentBlinds(data.gameState.current_blinds);
-          setNextLevelInSecs(data.gameState.next_level_in_secs);
-          setCurrentTurnFid(data.gameState.current_turn_fid);
-
-          const userFid = universalUser.fid;
-          const me = data.players.find((p: any) => p.fid === userFid);
-          if (me) {
-            setPlayerStack(me.stack_size);
-            setPlayerCurrentBet(me.current_bet || 0);
-            setPlayerCards(me.hand ? me.hand.split(",") : []);
-          }
+          applyGameStateResponse(data, myFid);
         }
-      } catch (e) {}
+      } catch (e) { }
     };
     fetchTableState();
     const interval = setInterval(fetchTableState, 1500);
     return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState, selectedTableId, universalUser.fid]);
 
   const sendEvent = async (eventData: any) => {
@@ -151,7 +129,37 @@ export function HomeTab() {
           }),
         }
       );
-    } catch (e) {}
+    } catch (e) { }
+  };
+
+  /** Apply a full game-state response from any API call (join, deal, action). */
+  const applyGameStateResponse = (data: any, myFid: number) => {
+    if (!data.success || !data.gameState) return;
+    setTableName(data.gameState.name || "");
+    setTableStatus(data.gameState.status || "waiting");
+    setStartTime(data.gameState.start_time || "");
+    setPotSize(data.gameState.pot_size || 0);
+    setPhase(data.gameState.phase || "preflop");
+    setCurrentBet(data.gameState.current_bet || 0);
+    setBoard(data.gameState.board ? data.gameState.board.split(",").filter(Boolean) : []);
+    setTableActionHistory(
+      data.gameState.action_history
+        ? String(data.gameState.action_history).split("|").filter(Boolean)
+        : []
+    );
+    setSeatedPlayers(data.players || []);
+    setCurrentTurnFid(data.gameState.current_turn_fid ?? null);
+    if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
+    if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
+    const maxPlayers = data.gameState.max_players;
+    if (maxPlayers) setMaxPlayers(Number(maxPlayers));
+
+    const me = (data.players || []).find((p: any) => Number(p.fid) === myFid);
+    if (me) {
+      setPlayerStack(Number(me.stack_size) || 0);
+      setPlayerCurrentBet(Number(me.current_bet) || 0);
+      setPlayerCards(me.hand ? String(me.hand).split(",").filter(Boolean) : []);
+    }
   };
 
   const handleJoinTable = async (tableId: string) => {
@@ -182,20 +190,7 @@ export function HomeTab() {
 
       setSelectedTableId(tableId);
       setGameState("table");
-      setTableName(data.gameState.name);
-      setTableStatus(data.gameState.status);
-      setStartTime(data.gameState.start_time);
-      setPotSize(data.gameState.pot_size);
-      setPhase(data.gameState.phase);
-      setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
-      setTableActionHistory(
-        data.gameState.action_history
-          ? String(data.gameState.action_history).split("|").filter(Boolean)
-          : []
-      );
-      setSeatedPlayers(data.players || []);
-      if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
-      if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
+      applyGameStateResponse(data, Number(universalUser.fid));
       void sendEvent({ action: "user_joined_table", table_id: tableId });
     } catch (error) {
       setJoinError(error instanceof Error ? error.message : "Unable to join this table");
@@ -235,6 +230,7 @@ export function HomeTab() {
 
   const handleNextHand = async () => {
     setCoachFeedback(null);
+    setLastHandResult(null);
     const res = await fetch("/api/table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -246,17 +242,7 @@ export function HomeTab() {
     });
     const data = await res.json();
     if (data.success && data.gameState) {
-      setPotSize(data.gameState.pot_size);
-      setPhase(data.gameState.phase);
-      setCurrentBet(data.gameState.current_bet || 0);
-      setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
-      setTableActionHistory(
-        data.gameState.action_history
-          ? String(data.gameState.action_history).split("|").filter(Boolean)
-          : []
-      );
-      if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
-      if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
+      applyGameStateResponse(data, Number(universalUser.fid));
     }
   };
 
@@ -292,17 +278,31 @@ export function HomeTab() {
 
     const data = await res.json();
     if (data.success && data.gameState) {
-      setPotSize(data.gameState.pot_size);
-      setPhase(data.gameState.phase);
-      setCurrentBet(data.gameState.current_bet || 0);
-      setBoard(data.gameState.board ? data.gameState.board.split(",") : []);
-      setTableActionHistory(
-        data.gameState.action_history
-          ? String(data.gameState.action_history).split("|").filter(Boolean)
-          : []
-      );
-      if (data.gameState.current_blinds) setCurrentBlinds(data.gameState.current_blinds);
-      if (data.gameState.next_level_in_secs !== undefined) setNextLevelInSecs(data.gameState.next_level_in_secs);
+      const prevPhase = phase;
+      applyGameStateResponse(data, Number(universalUser.fid));
+
+      // Determine hand result when transitioning to showdown
+      if (data.gameState.phase === "showdown" && prevPhase !== "showdown") {
+        const myFid = Number(universalUser.fid);
+        const me = (data.players || []).find((p: any) => Number(p.fid) === myFid);
+        // Pot was just zeroed by resolveShowdown/resolveFoldWin, so compare stacks
+        // to the opponent's to infer win/loss from the action history last entry.
+        const lastEntry = data.gameState.action_history
+          ? String(data.gameState.action_history).split("|").filter(Boolean).at(-1) ?? ""
+          : "";
+        if (lastEntry.includes("fold")) {
+          // Opponent folded — we won (unless WE just folded)
+          const iWasFolding = action === "fold";
+          setLastHandResult(iWasFolding ? "loss" : "win");
+        } else if (me) {
+          // Showdown: a positive stack change means we won
+          const stackBefore = playerStack;
+          const stackAfter = Number(me.stack_size);
+          if (stackAfter > stackBefore) setLastHandResult("win");
+          else if (stackAfter < stackBefore) setLastHandResult("loss");
+          else setLastHandResult("split");
+        }
+      }
     }
 
     try {
@@ -324,12 +324,12 @@ export function HomeTab() {
       });
       const resData = await resAnalyze.json();
       setCoachFeedback(resData);
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const toCall = currentBet - playerCurrentBet;
   const showRenderLobbyStatus =
-    renderLobby.status !== "disabled" && renderLobby.status !== "connected";
+    renderLobby.mode === "render" && renderLobby.status !== "connected";
   const renderLobbyStatusLabel =
     renderLobby.status === "connecting"
       ? "Connecting to Render lobby..."
@@ -383,11 +383,10 @@ export function HomeTab() {
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-bold text-lg text-gray-200">{table.name}</h3>
                   <span
-                    className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase ${
-                      table.status === "playing"
+                    className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase ${table.status === "playing"
                         ? "bg-yellow-900 text-yellow-200"
                         : "bg-green-900 text-green-200"
-                    }`}
+                      }`}
                   >
                     {table.status}
                   </span>
@@ -417,13 +416,12 @@ export function HomeTab() {
                       table.player_count >= table.max_players ||
                       (table.status === "playing" && table.player_count >= 2)
                     }
-                    className={`text-sm font-bold py-2 px-5 rounded-lg shadow transition-transform transform ${
-                      joiningTableId === null &&
-                      table.player_count < table.max_players &&
-                      (table.status !== "playing" || table.player_count < 2)
+                    className={`text-sm font-bold py-2 px-5 rounded-lg shadow transition-transform transform ${joiningTableId === null &&
+                        table.player_count < table.max_players &&
+                        (table.status !== "playing" || table.player_count < 2)
                         ? "bg-green-600 hover:bg-green-700 text-white active:scale-95"
                         : "bg-gray-700 text-gray-500 cursor-not-allowed"
-                    }`}
+                      }`}
                   >
                     {joiningTableId === table.id
                       ? "Joining..."
@@ -454,59 +452,59 @@ export function HomeTab() {
         <div className="my-auto max-w-md mx-auto w-full space-y-4">
           {runtimeChrome}
           <div className="glass-panel w-full p-4">
-          <h3 className="text-sm font-semibold tracking-wider text-gray-500 uppercase mb-4 text-center">
-            Seated Players ({seatedPlayers.length}/{maxPlayers})
-          </h3>
+            <h3 className="text-sm font-semibold tracking-wider text-gray-500 uppercase mb-4 text-center">
+              Seated Players ({seatedPlayers.length}/{maxPlayers})
+            </h3>
 
-          {startTime && (
-            <div className="text-center mb-6">
-              <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Tournament starts in</div>
-              <div className="text-4xl font-mono text-yellow-500 font-bold bg-gray-950 py-3 rounded-lg border border-gray-800 shadow-inner">
-                {(() => {
-                  const start = new Date(startTime);
-                  const diffMs = start.getTime() - currentTime.getTime();
-                  if (diffMs <= 0) return "00:00";
-                  const diffSecs = Math.floor(diffMs / 1000);
-                  const mins = Math.floor(diffSecs / 60);
-                  const secs = diffSecs % 60;
-                  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                })()}
-              </div>
-            </div>
-          )}
-
-          <div className="flex flex-col space-y-3 mb-6">
-            {seatedPlayers.map((player) => (
-              <div key={player.fid} className="flex items-center space-x-3 bg-gray-950 p-2.5 rounded-lg border border-gray-900">
-                {player.pfp_url ? (
-                  <img src={player.pfp_url} alt="Pfp" className="w-9 h-9 rounded-full" />
-                ) : (
-                  <div className="w-9 h-9 rounded-full bg-gray-800 flex items-center justify-center font-bold text-xs">
-                    {player.username[0]}
-                  </div>
-                )}
-                <div>
-                  <div className="font-bold text-sm text-gray-200">@{player.username}</div>
-                  <div className="text-xs text-gray-500">FID: {player.fid}</div>
+            {startTime && (
+              <div className="text-center mb-6">
+                <div className="text-xs text-gray-400 uppercase tracking-widest mb-1">Tournament starts in</div>
+                <div className="text-4xl font-mono text-yellow-500 font-bold bg-gray-950 py-3 rounded-lg border border-gray-800 shadow-inner">
+                  {(() => {
+                    const start = new Date(startTime);
+                    const diffMs = start.getTime() - currentTime.getTime();
+                    if (diffMs <= 0) return "00:00";
+                    const diffSecs = Math.floor(diffMs / 1000);
+                    const mins = Math.floor(diffSecs / 60);
+                    const secs = diffSecs % 60;
+                    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                  })()}
                 </div>
               </div>
-            ))}
-          </div>
+            )}
 
-          <div className="flex flex-col space-y-2">
-            <button
-              disabled
-              className="bg-gray-800 text-gray-500 font-bold py-3 rounded-lg text-center text-sm shadow cursor-not-allowed"
-            >
-              Waiting for Tournament to Start... ⏱️
-            </button>
-            <button
-              onClick={handleLeaveTable}
-              className="bg-red-900 bg-opacity-20 hover:bg-red-900 hover:bg-opacity-40 text-red-400 font-semibold py-2 rounded-lg text-center text-sm transition-colors"
-            >
-              Leave Room
-            </button>
-          </div>
+            <div className="flex flex-col space-y-3 mb-6">
+              {seatedPlayers.map((player) => (
+                <div key={player.fid} className="flex items-center space-x-3 bg-gray-950 p-2.5 rounded-lg border border-gray-900">
+                  {player.pfp_url ? (
+                    <img src={player.pfp_url} alt="Pfp" className="w-9 h-9 rounded-full" />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-gray-800 flex items-center justify-center font-bold text-xs">
+                      {player.username[0]}
+                    </div>
+                  )}
+                  <div>
+                    <div className="font-bold text-sm text-gray-200">@{player.username}</div>
+                    <div className="text-xs text-gray-500">FID: {player.fid}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-col space-y-2">
+              <button
+                disabled
+                className="bg-gray-800 text-gray-500 font-bold py-3 rounded-lg text-center text-sm shadow cursor-not-allowed"
+              >
+                Waiting for Tournament to Start... ⏱️
+              </button>
+              <button
+                onClick={handleLeaveTable}
+                className="bg-red-900 bg-opacity-20 hover:bg-red-900 hover:bg-opacity-40 text-red-400 font-semibold py-2 rounded-lg text-center text-sm transition-colors"
+              >
+                Leave Room
+              </button>
+            </div>
           </div>
         </div>
 
@@ -521,12 +519,12 @@ export function HomeTab() {
   return (
     <div className="flex flex-col h-screen w-full relative overflow-hidden bg-[url('https://i.imgur.com/k2j4j3V.jpeg')] bg-cover bg-center">
       <div className="absolute inset-0 bg-black bg-opacity-60 z-0 pointer-events-none"></div>
-      
+
       <div className="z-10 flex flex-col items-center justify-between h-full p-4 overflow-y-auto">
         <div className="w-full max-w-md shrink-0 mb-3">
           {runtimeChrome}
         </div>
-        
+
         {/* Header bar */}
         <div className="flex justify-between items-center w-full max-w-md shrink-0">
           <span className="text-xs text-gray-400 font-bold bg-gray-950 px-3 py-1 rounded-full border border-gray-900">
@@ -560,56 +558,56 @@ export function HomeTab() {
         {/* Opponents Rendering */}
         <div className="flex w-full justify-around mt-4 shrink-0">
           {seatedPlayers.filter(p => p.fid !== (universalUser.fid)).map((opponent) => (
-             <div key={opponent.fid} className={`flex flex-col items-center transition-opacity ${opponent.status === 'folded' ? 'opacity-40' : 'opacity-100'}`}>
-               <div className="relative">
-                 {opponent.pfp_url ? (
-                   <img src={opponent.pfp_url} alt="Pfp" className={`w-12 h-12 rounded-full border-2 ${currentTurnFid === opponent.fid ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]' : 'border-gray-700'}`} />
-                 ) : (
-                   <div className={`w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center font-bold text-lg border-2 ${currentTurnFid === opponent.fid ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]' : 'border-gray-700'}`}>
-                     {opponent.username[0]}
-                   </div>
-                 )}
-                 {/* Current Bet Indicator */}
-                 {opponent.current_bet > 0 && (
-                   <div className="absolute -bottom-2 -right-2 bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-blue-400 shadow-sm">
-                     ${opponent.current_bet}
-                   </div>
-                 )}
-               </div>
-
-               <div className="mt-1 text-center">
-                 <div className="text-[10px] text-gray-300 font-bold truncate w-16">@{opponent.username}</div>
-                 <div className="text-[10px] text-yellow-500 font-bold">${opponent.stack_size}</div>
-               </div>
-
-               {/* Hole Cards */}
-               <div className="flex space-x-1 mt-1">
-                 {opponent.hand && opponent.status === 'playing' ? (
-                   opponent.hand.split(",").map((card: string, i: number) => {
-                     const isVisible = isTrainingMode || phase === "showdown";
-                     if (!isVisible) {
-                       return (
-                         <div key={i} className="bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-red-800 to-red-950 w-6 h-8 rounded border border-gray-600 flex items-center justify-center shadow">
-                           <span className="text-gray-900 text-[6px] font-bold tracking-widest opacity-30">ZAO</span>
-                         </div>
-                       );
-                     } else {
-                       const { rank, suitSymbol, isRed } = getCardDisplay(card);
-                       return (
-                         <div key={i} className={`bg-white font-bold text-[10px] w-6 h-8 rounded border border-gray-300 flex items-center justify-center shadow ${isRed ? "text-red-600" : "text-black"}`}>
-                           {rank}{suitSymbol}
-                         </div>
-                       );
-                     }
-                   })
-                 ) : opponent.status === 'folded' ? (
-                   <div className="text-[8px] text-gray-600 italic">Folded</div>
-                 ) : (
-                   <div className="text-[8px] text-gray-600 italic">No Cards</div>
-                 )}
-               </div>
+            <div key={opponent.fid} className={`flex flex-col items-center transition-opacity ${opponent.status === 'folded' ? 'opacity-40' : 'opacity-100'}`}>
+              <div className="relative">
+                {opponent.pfp_url ? (
+                  <img src={opponent.pfp_url} alt="Pfp" className={`w-12 h-12 rounded-full border-2 ${currentTurnFid === opponent.fid ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]' : 'border-gray-700'}`} />
+                ) : (
+                  <div className={`w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center font-bold text-lg border-2 ${currentTurnFid === opponent.fid ? 'border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.5)]' : 'border-gray-700'}`}>
+                    {opponent.username[0]}
+                  </div>
+                )}
+                {/* Current Bet Indicator */}
+                {opponent.current_bet > 0 && (
+                  <div className="absolute -bottom-2 -right-2 bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-blue-400 shadow-sm">
+                    ${opponent.current_bet}
+                  </div>
+                )}
               </div>
-           ))}
+
+              <div className="mt-1 text-center">
+                <div className="text-[10px] text-gray-300 font-bold truncate w-16">@{opponent.username}</div>
+                <div className="text-[10px] text-yellow-500 font-bold">${opponent.stack_size}</div>
+              </div>
+
+              {/* Hole Cards */}
+              <div className="flex space-x-1 mt-1">
+                {opponent.hand && opponent.status === 'playing' ? (
+                  opponent.hand.split(",").map((card: string, i: number) => {
+                    const isVisible = isTrainingMode || phase === "showdown";
+                    if (!isVisible) {
+                      return (
+                        <div key={i} className="bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-red-800 to-red-950 w-6 h-8 rounded border border-gray-600 flex items-center justify-center shadow">
+                          <span className="text-gray-900 text-[6px] font-bold tracking-widest opacity-30">ZAO</span>
+                        </div>
+                      );
+                    } else {
+                      const { rank, suitSymbol, isRed } = getCardDisplay(card);
+                      return (
+                        <div key={i} className={`bg-white font-bold text-[10px] w-6 h-8 rounded border border-gray-300 flex items-center justify-center shadow ${isRed ? "text-red-600" : "text-black"}`}>
+                          {rank}{suitSymbol}
+                        </div>
+                      );
+                    }
+                  })
+                ) : opponent.status === 'folded' ? (
+                  <div className="text-[8px] text-gray-600 italic">Folded</div>
+                ) : (
+                  <div className="text-[8px] text-gray-600 italic">No Cards</div>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Table & Community Cards */}
@@ -628,9 +626,8 @@ export function HomeTab() {
                   return (
                     <div
                       key={i}
-                      className={`bg-white font-bold text-lg w-12 h-16 rounded shadow flex items-center justify-center ${
-                        isRed ? "text-red-600" : "text-black"
-                      }`}
+                      className={`bg-white font-bold text-lg w-12 h-16 rounded shadow flex items-center justify-center ${isRed ? "text-red-600" : "text-black"
+                        }`}
                     >
                       {rank}{suitSymbol}
                     </div>
@@ -686,9 +683,8 @@ export function HomeTab() {
                 return (
                   <div
                     key={i}
-                    className={`bg-white font-bold text-xl w-14 h-20 rounded-lg shadow-lg border-2 border-gray-300 flex items-center justify-center ${
-                      isRed ? "text-red-600" : "text-black"
-                    }`}
+                    className={`bg-white font-bold text-xl w-14 h-20 rounded-lg shadow-lg border-2 border-gray-300 flex items-center justify-center ${isRed ? "text-red-600" : "text-black"
+                      }`}
                   >
                     {rank}{suitSymbol}
                   </div>
@@ -702,90 +698,104 @@ export function HomeTab() {
         <div className="glass-panel w-full max-w-md p-3 mb-2">
           {phase === "showdown" ? (
             <div className="text-center space-y-3 py-2">
-              <p className="text-green-400 font-bold text-lg">
-                {potSize === 0 ? "Opponent Folded! You Won! 🏆" : "Showdown! Cards revealed."}
-              </p>
-              <button
-                onClick={handleNextHand}
-                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg text-lg animate-bounce"
-              >
-                Start Next Hand 🚀
-              </button>
+                  {lastHandResult === "win" ? (
+                    <p className="text-green-400 font-bold text-lg">You Won! 🏆</p>
+                  ) : lastHandResult === "loss" ? (
+                    <p className="text-red-400 font-bold text-lg">You Lost 😔</p>
+                  ) : lastHandResult === "split" ? (
+                    <p className="text-yellow-400 font-bold text-lg">Split Pot! 🤝</p>
+                  ) : (
+                    <p className="text-gray-300 font-bold text-lg">Hand Over — Cards Revealed</p>
+                  )}
+                  <button
+                    onClick={handleNextHand}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg text-lg animate-bounce"
+                  >
+                    Start Next Hand 🚀
+                  </button>
             </div>
           ) : (
             <div className="flex flex-col space-y-2">
-              <div className="flex justify-between items-center text-xs text-gray-400 px-1">
-                <span>To Call: <span className="text-yellow-400 font-bold">${toCall}</span></span>
-                <span>Active Bet: <span className="text-blue-400 font-bold">${currentBet}</span></span>
-              </div>
-              
-              {currentTurnFid !== (universalUser.fid) ? (
-                <div className="flex items-center justify-center p-4 bg-gray-800 rounded-lg">
-                  <span className="text-gray-400 font-semibold animate-pulse">Waiting for other players...</span>
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                  onClick={() => handleAction("fold")}
-                  className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 rounded-lg text-sm"
-                >
-                  Fold
-                </button>
-                
-                {toCall === 0 ? (
-                  <button
-                    onClick={() => handleAction("check")}
-                    className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 rounded-lg text-sm"
-                  >
-                    Check
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handleAction("call")}
-                    className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 rounded-lg text-sm"
-                  >
-                    Call (${toCall})
-                  </button>
-                )}
-              </div>
-
-              {/* Betting & Raising presets */}
-              <div className="grid grid-cols-4 gap-1.5 pt-1">
-                {toCall === 0 ? (
-                  <>
-                    <button onClick={() => handleAction("bet", 100)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
-                      Bet 2BB ($100)
-                    </button>
-                    <button onClick={() => handleAction("bet", 150)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
-                      Bet 3BB ($150)
-                    </button>
-                    <button onClick={() => handleAction("bet", potSize)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
-                      Bet Pot (${potSize})
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button onClick={() => handleAction("raise", currentBet + 100)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
-                      Raise +$100
-                    </button>
-                    <button onClick={() => handleAction("raise", currentBet * 2)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
-                      Raise Min (${currentBet * 2})
-                    </button>
-                    <button onClick={() => handleAction("raise", potSize + toCall * 2)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
-                      Raise Pot
-                    </button>
-                  </>
-                )}
-                    <button
-                      onClick={() => handleAction("all_in")}
-                      className="bg-red-900 hover:bg-red-950 text-white text-xs font-bold py-1.5 rounded"
-                    >
-                      All In (${playerStack})
-                    </button>
+                  <div className="flex justify-between items-center text-xs text-gray-400 px-1">
+                    <span>To Call: <span className="text-yellow-400 font-bold">${toCall}</span></span>
+                    <span>Active Bet: <span className="text-blue-400 font-bold">${currentBet}</span></span>
                   </div>
-                </>
-              )}
+
+                  {Number(currentTurnFid) !== Number(universalUser.fid) ? (
+                    <div className="flex items-center justify-center p-4 bg-gray-800 rounded-lg">
+                      <span className="text-gray-400 font-semibold animate-pulse">Waiting for other players...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => handleAction("fold")}
+                          className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 rounded-lg text-sm"
+                        >
+                          Fold
+                        </button>
+
+                        {toCall === 0 ? (
+                          <button
+                            onClick={() => handleAction("check")}
+                            className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 rounded-lg text-sm"
+                          >
+                            Check
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleAction("call")}
+                            className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 rounded-lg text-sm"
+                          >
+                            Call (${toCall})
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Betting & Raising presets — amounts based on actual blind level */}
+                      <div className="grid grid-cols-4 gap-1.5 pt-1">
+                        {(() => {
+                          const bb = currentBlinds?.bb ?? 50;
+                          const bet2bb = playerCurrentBet + bb * 2;
+                          const bet3bb = playerCurrentBet + bb * 3;
+                          const betPot = playerCurrentBet + Math.max(potSize, bb * 2);
+                          const raiseMin = Math.max(currentBet * 2, currentBet + bb);
+                          const raisePot = currentBet + toCall + potSize;
+                          return toCall === 0 ? (
+                            <>
+                              <button onClick={() => handleAction("bet", bet2bb)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
+                                2BB (${bet2bb})
+                              </button>
+                              <button onClick={() => handleAction("bet", bet3bb)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
+                                3BB (${bet3bb})
+                              </button>
+                              <button onClick={() => handleAction("bet", betPot)} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded">
+                                Pot (${betPot})
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => handleAction("raise", raiseMin)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
+                                Min (${raiseMin})
+                              </button>
+                              <button onClick={() => handleAction("raise", currentBet * 3)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
+                                3x (${currentBet * 3})
+                              </button>
+                              <button onClick={() => handleAction("raise", raisePot)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold py-1.5 rounded">
+                                Pot (${raisePot})
+                              </button>
+                            </>
+                          );
+                        })()}
+                        <button
+                          onClick={() => handleAction("all_in")}
+                          className="bg-red-900 hover:bg-red-950 text-white text-xs font-bold py-1.5 rounded"
+                        >
+                          All In (${playerStack})
+                        </button>
+                      </div>
+                    </>
+                  )}
             </div>
           )}
         </div>
