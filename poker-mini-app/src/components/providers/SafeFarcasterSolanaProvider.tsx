@@ -23,7 +23,7 @@ export function SafeFarcasterSolanaProvider({ endpoint, children }: SafeFarcaste
 
   useEffect(() => {
     let cancelled = false;
-    let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
+    let timeoutId: number | undefined;
 
     (async () => {
       try {

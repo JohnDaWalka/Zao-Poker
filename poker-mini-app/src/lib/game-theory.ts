@@ -568,7 +568,7 @@ export function analyzeHoldemSpot(rawSpot: SolverSpot): SolverAnalysis {
     }));
 
   const tags = [
-    detectStreet(spot.boardCards),
+    detectStreet(spot.boardCards ?? []),
     bucketHandStrength(monteCarlo.equity),
     bucketPressure(spot.toCall, spot.potSize),
     bucketSpr(spot.stackSize, spot.potSize),
@@ -578,7 +578,7 @@ export function analyzeHoldemSpot(rawSpot: SolverSpot): SolverAnalysis {
 
   return {
     infoSet,
-    street: detectStreet(spot.boardCards),
+    street: detectStreet(spot.boardCards ?? []),
     potOdds,
     equity: monteCarlo.equity,
     winRate: monteCarlo.winRate,

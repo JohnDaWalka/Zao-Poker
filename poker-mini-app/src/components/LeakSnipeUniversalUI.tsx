@@ -1922,6 +1922,10 @@ function AnalysisView({
     setSolverError(null);
 
     async function loadSolverPanel() {
+      // Re-narrow for the async closure (TS loses the effect-level guard here).
+      if (!table || !currentSeat) {
+        return;
+      }
       try {
         const response = await fetch("/api/analyze", {
           method: "POST",
