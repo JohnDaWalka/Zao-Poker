@@ -1,6 +1,6 @@
 import { Metadata } from "next";
-import "../components/leaksnipe-ui.css";
-import LeakSnipeUniversalUI from "~/components/LeakSnipeUniversalUI";
+import "../components/zao-ui.css";
+import ZaoPokerUI from "~/components/ZaoPokerUI";
 import { APP_NAME, APP_DESCRIPTION, APP_OG_IMAGE_URL } from "~/lib/constants";
 import { getMiniAppEmbedMetadata } from "~/lib/utils";
 
@@ -21,5 +21,5 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default function Home() {
-  return <LeakSnipeUniversalUI />;
+  return <ZaoPokerUI />;
 }

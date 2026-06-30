@@ -22,7 +22,7 @@ export default {
   theme: {
   	extend: {
   		colors: {
-  			// LeakSnipe brand: chemist-neon cyan over a near-black glass surface.
+  			// ZAO Poker brand: chemist-neon cyan over a near-black glass surface.
   			primary: "#22d3ee", // Main brand color (neon cyan)
   			"primary-light": "#67e8f9", // For hover states
   			"primary-dark": "#0891b2", // For active states

@@ -360,7 +360,7 @@ export function HomeTab() {
       <div className="flex flex-col min-h-screen bg-surface text-white p-4">
         <header className="py-6 text-center border-b border-primary/15 mb-6">
           <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-primary-light to-neon-green drop-shadow-[0_0_12px_rgba(34,211,238,0.35)]">
-            LeakSnipe Poker Lobby
+            ZAO Poker Lobby
           </h1>
           <p className="text-xs text-gray-500 mt-1">Select a table to join — Farcaster, wallet, or guest</p>
         </header>

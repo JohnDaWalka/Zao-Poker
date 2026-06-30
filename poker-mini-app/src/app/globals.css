@@ -25,7 +25,7 @@
 @tailwind utilities;
 
 :root {
-  /* LeakSnipe is always dark/glassmorphic by design, regardless of system
+  /* ZAO Poker is always dark/glassmorphic by design, regardless of system
      theme — this is a poker/crypto/chemist aesthetic, not a light/dark toggle. */
   --background: #03060a;
   --foreground: #e6f6fb;

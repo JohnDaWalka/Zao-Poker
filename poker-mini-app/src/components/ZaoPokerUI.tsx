@@ -207,7 +207,7 @@ function humanRuntimeLabel(runtimeHost: ReturnType<typeof useUniversalUser>["run
   }
 }
 
-export default function LeakSnipeUniversalUI() {
+export default function ZaoPokerUI() {
   useMiniAppReady();
 
   const user = useUniversalUser();
@@ -381,7 +381,7 @@ export default function LeakSnipeUniversalUI() {
 
           <div>
             <p className="ls-eyebrow">Cross-chain poker intelligence</p>
-            <h1>LeakSnipe</h1>
+            <h1>ZAO</h1>
             <p className="ls-hero-copy">
               A universal poker mini-app for Farcaster, iOS Safari, Android,
               desktop browsers, and wallet-enabled web.

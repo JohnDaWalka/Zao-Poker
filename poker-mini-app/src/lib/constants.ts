@@ -25,13 +25,13 @@ export const APP_URL: string =
  * The name of the mini app as displayed to users.
  * Used in titles, headers, and app store listings.
  */
-export const APP_NAME: string = 'LeakSnipe Poker';
+export const APP_NAME: string = 'ZAO Poker';
 
 /**
  * A brief description of the mini app's functionality.
  * Used in app store listings and metadata.
  */
-export const APP_DESCRIPTION: string = 'Multiplayer poker with a GTO coach, on Farcaster, wallets, and the open web.';
+export const APP_DESCRIPTION: string = 'ZAO Poker — Real-time multiplayer poker with GTO coach on Farcaster and the open web.';
 
 /**
  * The primary category for the mini app.
@@ -86,7 +86,7 @@ export const APP_ACCOUNT_ASSOCIATION: AccountAssociation | undefined = {
  * Text displayed on the main action button.
  * Used for the primary call-to-action in the mini app.
  */
-export const APP_BUTTON_TEXT: string = 'Launch LeakSnipe';
+export const APP_BUTTON_TEXT: string = 'Launch ZAO';
 
 // --- Integration Configuration ---
 /**

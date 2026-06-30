@@ -5,7 +5,7 @@ import { APP_DESCRIPTION, APP_NAME } from "~/lib/constants";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: APP_NAME,
-    short_name: "LeakSnipe",
+    short_name: "ZAO",
     description: APP_DESCRIPTION,
     start_url: "/",
     scope: "/",

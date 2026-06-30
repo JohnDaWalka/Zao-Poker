@@ -57,7 +57,7 @@ export interface AppProps {
  * ```
  */
 export default function App(
-  { title }: AppProps = { title: "LeakSnipe Poker" }
+  { title }: AppProps = { title: "ZAO Poker" }
 ) {
   // --- Hooks ---
   useMiniAppReady();

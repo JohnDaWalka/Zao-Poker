@@ -7,7 +7,7 @@ import { useRuntimeHost } from "./useRuntimeHost";
 import { useUniversalWallet } from "./useUniversalWallet";
 import type { UniversalUser } from "~/types/universal";
 
-const GUEST_ID_STORAGE_KEY = "leaksnipe_guest_id";
+const GUEST_ID_STORAGE_KEY = "zao_guest_id";
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
