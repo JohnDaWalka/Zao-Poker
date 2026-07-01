@@ -22,6 +22,7 @@ import {
   type TableStatus,
 } from "~/hooks/useRenderLobby";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
+import type { UniversalUser } from "~/types/universal";
 
 type Tab = "lobby" | "table" | "analysis" | "leaderboard" | "profile";
 type SolverPanelData = {
@@ -533,7 +534,7 @@ export default function ZaoPokerUI() {
           {activeTab === "table" && activeTable && (
             <ActionTableView
               table={activeTable}
-              userId={user.id}
+              user={user}
               onJoin={() => joinTable(activeTable)}
               onLeave={() => leaveTable(activeTable)}
               onReady={() => toggleReady(activeTable)}
@@ -541,7 +542,7 @@ export default function ZaoPokerUI() {
                 const lobbyWithActions = lobby as typeof lobby & {
                   sendGameAction?: (
                     tableId: string,
-                    user: typeof user,
+                    user: UniversalUser,
                     payload: { action: string; amount?: number },
                   ) => void;
                 };
@@ -1310,9 +1311,9 @@ function formatMoney(value: number) {
   return `$${value.toFixed(2)}`;
 }
 
-function getFallbackHandState(table: PokerTable, userId: string): HandState {
+function getFallbackHandState(table: PokerTable, user: UniversalUser): HandState {
   const heroSeat =
-    table.seats.find((seat) => seat.user?.id === userId) ?? table.seats[0];
+    table.seats.find((seat) => seat.user?.fid === user.fid) ?? table.seats[0];
 
   return {
     handId: "preview-hand",
@@ -1358,11 +1359,11 @@ function getFallbackHandState(table: PokerTable, userId: string): HandState {
   };
 }
 
-function getHandState(table: PokerTable, userId: string): HandState {
+function getHandState(table: PokerTable, user: UniversalUser): HandState {
   const maybeTable = table as TableWithHandState;
   if (maybeTable.handState) return maybeTable.handState;
 
-  const heroSeat = table.seats.find((seat) => seat.user?.id === userId);
+  const heroSeat = table.seats.find((seat) => seat.user?.fid === user.fid);
   const bb = table.currentBlinds?.bb || 10;
   const toCall = heroSeat ? Math.max(0, table.currentBet - heroSeat.currentBet) : 0;
   
@@ -1489,26 +1490,26 @@ function getActionLabel(action: GameActionType, amount?: number) {
 
 function ActionTableView({
   table,
-  userId,
+  user,
   onJoin,
   onLeave,
   onReady,
   onGameAction,
 }: {
   table: PokerTable;
-  userId: string;
+  user: UniversalUser;
   onJoin: () => void;
   onLeave: () => void;
   onReady: () => void;
   onGameAction: (action: string, amount?: number) => void;
 }) {
-  const hand = getHandState(table, userId);
+  const hand = getHandState(table, user);
 
   const [betAmount, setBetAmount] = useState<number>(
     Math.max(hand.minRaise, hand.minBet),
   );
 
-  const currentSeat = table.seats.find((seat) => seat.user?.id === userId);
+  const currentSeat = table.seats.find((seat) => seat.user?.fid === user.fid);
   const occupied = occupiedSeats(table);
   const readyCount = table.seats.filter((seat) => seat.user && seat.isReady).length;
   const isFull = occupied >= table.maxPlayers;
@@ -1586,7 +1587,7 @@ function ActionTableView({
                   isSmallBlind={seat.seatNumber === hand.smallBlindSeatNumber}
                   isBigBlind={seat.seatNumber === hand.bigBlindSeatNumber}
                   isTurn={seat.seatNumber === hand.currentTurnSeatNumber}
-                  isHero={seat.user?.id === userId}
+                  isHero={seat.user?.fid === user.fid}
                 />
               ))}
             </div>
@@ -1614,7 +1615,7 @@ function ActionTableView({
                   key={seat.seatNumber}
                   seat={seat}
                   isTurn={seat.seatNumber === hand.currentTurnSeatNumber}
-                  isHero={seat.user?.id === userId}
+                  isHero={seat.user?.fid === user.fid}
                 />
               ))}
             </div>
