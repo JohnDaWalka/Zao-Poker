@@ -378,55 +378,59 @@ export default function ZaoPokerUI() {
       <div className="ls-bg-molecule ls-bg-molecule-b">C₂₁H₃₀O₂ · EDGE</div>
       <div className="ls-bg-film">ILFORD HP5 PLUS · 400TX</div>
 
-      <section className="ls-hero">
-        <div className="ls-brand-block">
-          <div className="ls-logo">
-            <span>♠</span>
+      {activeTab !== "table" && (
+        <section className="ls-hero">
+          <div className="ls-brand-block">
+            <div className="ls-logo">
+              <span>♠</span>
+            </div>
+
+            <div>
+              <p className="ls-eyebrow">Cross-chain poker intelligence</p>
+              <h1>ZAO</h1>
+              <p className="ls-hero-copy">
+                A universal poker mini-app for Farcaster, iOS Safari, Android,
+                desktop browsers, and wallet-enabled web.
+              </p>
+            </div>
           </div>
 
-          <div>
-            <p className="ls-eyebrow">Cross-chain poker intelligence</p>
-            <h1>ZAO</h1>
-            <p className="ls-hero-copy">
-              A universal poker mini-app for Farcaster, iOS Safari, Android,
-              desktop browsers, and wallet-enabled web.
-            </p>
+          <UniversalIdentityCard user={user} />
+        </section>
+      )}
+
+      {activeTab !== "table" && (
+        <section className="ls-status-row">
+          <div
+            className={
+              lobby.status === "connected"
+                ? "ls-connection online"
+                : "ls-connection offline"
+            }
+          >
+            <span />
+            {lobby.status === "connected"
+              ? lobby.mode === "render"
+                ? "Render lobby live"
+                : "Vercel lobby live"
+              : "Reconnecting lobby"}
           </div>
-        </div>
 
-        <UniversalIdentityCard user={user} />
-      </section>
-
-      <section className="ls-status-row">
-        <div
-          className={
-            lobby.status === "connected"
-              ? "ls-connection online"
-              : "ls-connection offline"
-          }
-        >
-          <span />
-          {lobby.status === "connected"
-            ? lobby.mode === "render"
-              ? "Render lobby live"
-              : "Vercel lobby live"
-            : "Reconnecting lobby"}
-        </div>
-
-        <div className="ls-runtime-pill">
-          {user.authSource.toUpperCase()} · {humanRuntimeLabel(user.runtimeHost)}
-          {user.walletAddress ? ` · ${shortAddress(user.walletAddress)}` : ""}
-        </div>
-
-        {!lobby.supportsReadyState && (
           <div className="ls-runtime-pill">
-            Current mode: compatible fallback
+            {user.authSource.toUpperCase()} · {humanRuntimeLabel(user.runtimeHost)}
+            {user.walletAddress ? ` · ${shortAddress(user.walletAddress)}` : ""}
           </div>
-        )}
 
-        {lobby.error && <div className="ls-error">{lobby.error}</div>}
-        {productData.error && <div className="ls-error">{productData.error}</div>}
-      </section>
+          {!lobby.supportsReadyState && (
+            <div className="ls-runtime-pill">
+              Current mode: compatible fallback
+            </div>
+          )}
+
+          {lobby.error && <div className="ls-error">{lobby.error}</div>}
+          {productData.error && <div className="ls-error">{productData.error}</div>}
+        </section>
+      )}
 
       <section className="ls-main-grid">
         <aside className="ls-sidebar">
@@ -1342,7 +1346,112 @@ function getFallbackHandState(table: PokerTable, userId: string): HandState {
 
 function getHandState(table: PokerTable, userId: string): HandState {
   const maybeTable = table as TableWithHandState;
-  return maybeTable.handState ?? getFallbackHandState(table, userId);
+  if (maybeTable.handState) return maybeTable.handState;
+
+  const heroSeat = table.seats.find((seat) => seat.user?.id === userId);
+  const bb = table.currentBlinds?.bb || 10;
+  const toCall = heroSeat ? Math.max(0, table.currentBet - heroSeat.currentBet) : 0;
+  
+  const parseCard = (cardStr: string): PlayingCard => {
+    const rank = cardStr.slice(0, 1);
+    const suitChar = cardStr.slice(1, 2);
+    const suitMap: Record<string, CardSuit> = {
+      h: "♥",
+      d: "♦",
+      c: "♣",
+      s: "♠",
+    };
+    return {
+      rank: rank.toUpperCase(),
+      suit: suitMap[suitChar] || "♠",
+    };
+  };
+
+  const boardCards = (table.board || []).map(parseCard);
+  const heroHoleCards = heroSeat?.holeCards ? heroSeat.holeCards.map(parseCard) : [];
+
+  let dealerSeatNumber = 1;
+  let smallBlindSeatNumber = 1;
+  let bigBlindSeatNumber = 2;
+
+  const activeSeats = table.seats.filter(s => s.user);
+  if (activeSeats.length > 2) {
+    dealerSeatNumber = activeSeats[0].seatNumber;
+    smallBlindSeatNumber = activeSeats[1].seatNumber;
+    bigBlindSeatNumber = activeSeats[2].seatNumber;
+  } else if (activeSeats.length === 2) {
+    dealerSeatNumber = activeSeats[0].seatNumber;
+    smallBlindSeatNumber = activeSeats[0].seatNumber;
+    bigBlindSeatNumber = activeSeats[1].seatNumber;
+  }
+
+  const currentTurnSeat = table.seats.find(s => s.user?.fid === table.currentTurnFid);
+  const currentTurnSeatNumber = currentTurnSeat ? currentTurnSeat.seatNumber : null;
+
+  let legalActions: GameActionType[] = [];
+  const isHeroTurn = heroSeat && table.currentTurnFid === heroSeat.user?.fid;
+  if (isHeroTurn) {
+    const heroStack = heroSeat.stack || 0;
+    if (toCall === 0) {
+      legalActions = ["check", "bet", "all_in", "fold"];
+    } else {
+      legalActions = ["fold", "call"];
+      if (heroStack > toCall) {
+        legalActions.push("raise", "all_in");
+      } else {
+        legalActions.push("all_in");
+      }
+    }
+  }
+
+  const actionLog: ActionLogItem[] = [];
+  if (table.actionHistory) {
+    table.actionHistory.forEach((rawEntry, idx) => {
+      const parts = rawEntry.split(":");
+      if (parts.length >= 2) {
+        const actorRaw = parts[0];
+        const actionRaw = parts[1] as GameActionType;
+        const amountRaw = parts[2] ? parseInt(parts[2]) : undefined;
+        
+        let actorFid = 1;
+        if (actorRaw.startsWith("p")) {
+          actorFid = parseInt(actorRaw.slice(1)) || 1;
+        } else if (actorRaw === "ai") {
+          actorFid = 1;
+        }
+        
+        const seat = table.seats.find(s => s.user?.fid === actorFid);
+        if (seat) {
+          actionLog.push({
+            id: `act-${idx}`,
+            seatNumber: seat.seatNumber,
+            playerName: seat.user?.displayName || seat.user?.username || `Player ${actorFid}`,
+            action: actionRaw,
+            amount: amountRaw,
+            street: table.phase as GameStreet,
+            timestamp: Date.now(),
+          });
+        }
+      }
+    });
+  }
+
+  return {
+    handId: table.id,
+    street: (table.phase || "preflop") as GameStreet,
+    pot: table.potSize,
+    toCall,
+    minBet: bb,
+    minRaise: table.currentBet + Math.max(bb, toCall),
+    heroHoleCards,
+    boardCards,
+    dealerSeatNumber,
+    smallBlindSeatNumber,
+    bigBlindSeatNumber,
+    currentTurnSeatNumber,
+    legalActions,
+    actionLog,
+  };
 }
 
 function getActionLabel(action: GameActionType, amount?: number) {
@@ -1478,6 +1587,8 @@ function ActionTableView({
             betAmount={betAmount}
             setBetAmount={setBetAmount}
             onAction={submitAction}
+            potSize={hand.pot}
+            heroStack={currentSeat?.stack ?? 0}
           />
         </div>
 
@@ -1573,6 +1684,8 @@ function ActionControls({
   betAmount,
   setBetAmount,
   onAction,
+  potSize,
+  heroStack,
 }: {
   canAct: boolean;
   legalActions: GameActionType[];
@@ -1582,6 +1695,8 @@ function ActionControls({
   betAmount: number;
   setBetAmount: (value: number) => void;
   onAction: (action: string) => void;
+  potSize: number;
+  heroStack: number;
 }) {
   const canFold = legalActions.includes("fold");
   const canCheck = legalActions.includes("check");
@@ -1615,7 +1730,7 @@ function ActionControls({
         <input
           type="range"
           min={minAggressiveAmount}
-          max={500}
+          max={Math.max(minAggressiveAmount, heroStack)}
           step={1}
           value={betAmount}
           disabled={!canAct || (!canBet && !canRaise)}
@@ -1624,7 +1739,7 @@ function ActionControls({
 
         <div className="ls-bet-presets">
           {[0.33, 0.5, 0.75, 1].map((fraction) => {
-            const value = Math.max(minAggressiveAmount, Math.round(84.5 * fraction));
+            const value = Math.max(minAggressiveAmount, Math.round(potSize * fraction));
 
             return (
               <button

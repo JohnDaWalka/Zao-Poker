@@ -16,8 +16,24 @@ function ensureDb() {
   return dbReady;
 }
 
-// Using shared createDeck from poker-core
-// (local duplicate removed for shared lib usage)
+// 52-card deck generator and shuffler
+function createDeck(): string[] {
+  const suits = ["h", "d", "c", "s"];
+  const ranks = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+  const deck: string[] = [];
+  for (const suit of suits) {
+    for (const rank of ranks) {
+      deck.push(rank + suit);
+    }
+  }
+  // Fisher-Yates Shuffle
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+
 
 function encodeActionEntry(actor: string, action: string, amount?: number) {
   const normalizedActor = actor.replace(/[^a-zA-Z0-9_-]/g, "");

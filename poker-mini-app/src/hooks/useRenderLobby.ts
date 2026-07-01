@@ -41,6 +41,7 @@ export type PokerTable = {
   actionHistory: string[];
   currentTurnFid: number | null;
   seats: Seat[];
+  currentBlinds?: { sb: number; bb: number; ante: number };
 };
 
 export type LobbyState = {
@@ -192,6 +193,11 @@ function mapCurrentApiTable(
       ? Number(table.current_turn_fid)
       : null,
     seats: seatDefaults,
+    currentBlinds: (table as any).current_blinds ? {
+      sb: Number((table as any).current_blinds.sb),
+      bb: Number((table as any).current_blinds.bb),
+      ante: Number((table as any).current_blinds.ante),
+    } : undefined,
   };
 }
 
