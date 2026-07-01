@@ -343,8 +343,13 @@ export default function ZaoPokerUI() {
     if (!joined) {
       return;
     }
+    // Force the table view to stick even if polling hasn't updated yet
     setActiveTableId(table.id);
     setActiveTab("table");
+    // Trigger a refresh so state (including hole cards) comes in immediately
+    setTimeout(() => {
+      void lobby.refresh();
+    }, 50);
   }
 
   function leaveTable(table: PokerTable) {
@@ -522,16 +527,27 @@ export default function ZaoPokerUI() {
           )}
 
           {activeTab === "table" && activeTable && (
-            <TableView
+            <ActionTableView
               table={activeTable}
-              user={user}
-              userFid={user.fid}
-              supportsReadyState={lobby.supportsReadyState}
+              userId={user.id}
               onJoin={() => joinTable(activeTable)}
               onLeave={() => leaveTable(activeTable)}
               onReady={() => toggleReady(activeTable)}
-              onAction={(action, amount) => playTableAction(activeTable, action, amount)}
-              onDealNextHand={() => dealNextHand(activeTable)}
+              onGameAction={(action, amount) => {
+                const lobbyWithActions = lobby as typeof lobby & {
+                  sendGameAction?: (
+                    tableId: string,
+                    user: typeof user,
+                    payload: { action: string; amount?: number },
+                  ) => void;
+                };
+                lobbyWithActions.sendGameAction?.(activeTable.id, user, {
+                  action,
+                  amount,
+                });
+                // Also call local for compatibility
+                playTableAction(activeTable, action as any, amount);
+              }}
             />
           )}
 
@@ -762,14 +778,9 @@ function LobbyView({
 
   return (
     <div className="ls-view">
-      <div className="ls-view-header">
+      <div className="ls-view-header" style={{ paddingBottom: '8px' }}>
         <div>
-          <p className="ls-eyebrow">Live Lobby</p>
-          <h2>Choose your table</h2>
-          <p>
-            Cross-device poker access with Farcaster, wallet, and browser guest
-            identity.
-          </p>
+          <h2 style={{ fontSize: '18px', margin: '0 0 4px' }}>Tables</h2>
         </div>
 
         <button
@@ -1222,659 +1233,568 @@ function LobbyView({
   );
 }
 
-function SeatDots({ table }: { table: PokerTable }) {
-  return (
-    <div className="ls-seat-dots">
-      {table.seats.map((seat) => (
-        <span
-          key={seat.seatNumber}
-          className={seat.user ? "filled" : ""}
-          title={seat.user?.displayName ?? `Seat ${seat.seatNumber}`}
-        />
-      ))}
-    </div>
-  );
+// --- New Action-first table UI (replaces old TableView) ---
+
+type CardSuit = "♠" | "♥" | "♦" | "♣";
+type CardColor = "black" | "red";
+
+type PlayingCard = {
+  rank: string;
+  suit: CardSuit;
+};
+
+type GameStreet = "preflop" | "flop" | "turn" | "river" | "showdown";
+
+type GameActionType =
+  | "fold"
+  | "check"
+  | "call"
+  | "bet"
+  | "raise"
+  | "all_in";
+
+type ActionLogItem = {
+  id: string;
+  seatNumber: number;
+  playerName: string;
+  action: GameActionType;
+  amount?: number;
+  street: GameStreet;
+  timestamp: number;
+};
+
+type HandState = {
+  handId: string;
+  street: GameStreet;
+  pot: number;
+  toCall: number;
+  minBet: number;
+  minRaise: number;
+  heroHoleCards: PlayingCard[];
+  boardCards: PlayingCard[];
+  dealerSeatNumber: number;
+  smallBlindSeatNumber: number;
+  bigBlindSeatNumber: number;
+  currentTurnSeatNumber: number | null;
+  legalActions: GameActionType[];
+  actionLog: ActionLogItem[];
+};
+
+type TableWithHandState = PokerTable & {
+  handState?: HandState;
+};
+
+function getCardColor(card: PlayingCard): CardColor {
+  return card.suit === "♥" || card.suit === "♦" ? "red" : "black";
 }
 
-function TableView({
+function formatMoney(value: number) {
+  return `$${value.toFixed(2)}`;
+}
+
+function getFallbackHandState(table: PokerTable, userId: string): HandState {
+  const heroSeat =
+    table.seats.find((seat) => seat.user?.id === userId) ?? table.seats[0];
+
+  return {
+    handId: "preview-hand",
+    street: "flop",
+    pot: 84.5,
+    toCall: 12.5,
+    minBet: 18,
+    minRaise: 36,
+    heroHoleCards: [
+      { rank: "A", suit: "♠" },
+      { rank: "T", suit: "♠" },
+    ],
+    boardCards: [
+      { rank: "Q", suit: "♠" },
+      { rank: "8", suit: "♠" },
+      { rank: "3", suit: "♦" },
+    ],
+    dealerSeatNumber: 1,
+    smallBlindSeatNumber: 2,
+    bigBlindSeatNumber: 3,
+    currentTurnSeatNumber: heroSeat?.seatNumber ?? null,
+    legalActions: ["fold", "call", "raise", "all_in"],
+    actionLog: [
+      {
+        id: "a1",
+        seatNumber: 2,
+        playerName: "CryptoAce",
+        action: "bet",
+        amount: 12.5,
+        street: "flop",
+        timestamp: Date.now() - 16000,
+      },
+      {
+        id: "a2",
+        seatNumber: heroSeat?.seatNumber ?? 1,
+        playerName: heroSeat?.user?.displayName ?? "You",
+        action: "call",
+        amount: 12.5,
+        street: "flop",
+        timestamp: Date.now() - 9000,
+      },
+    ],
+  };
+}
+
+function getHandState(table: PokerTable, userId: string): HandState {
+  const maybeTable = table as TableWithHandState;
+  return maybeTable.handState ?? getFallbackHandState(table, userId);
+}
+
+function getActionLabel(action: GameActionType, amount?: number) {
+  switch (action) {
+    case "fold":
+      return "Fold";
+    case "check":
+      return "Check";
+    case "call":
+      return amount ? `Call ${formatMoney(amount)}` : "Call";
+    case "bet":
+      return amount ? `Bet ${formatMoney(amount)}` : "Bet";
+    case "raise":
+      return amount ? `Raise ${formatMoney(amount)}` : "Raise";
+    case "all_in":
+      return "All In";
+    default:
+      return action;
+  }
+}
+
+function ActionTableView({
   table,
-  user,
-  userFid,
-  supportsReadyState,
+  userId,
   onJoin,
   onLeave,
   onReady,
-  onAction,
-  onDealNextHand,
+  onGameAction,
 }: {
   table: PokerTable;
-  user: ReturnType<typeof useUniversalUser>;
-  userFid: number;
-  supportsReadyState: boolean;
+  userId: string;
   onJoin: () => void;
   onLeave: () => void;
   onReady: () => void;
-  onAction: (
-    action: "fold" | "check" | "call" | "bet" | "raise" | "all_in",
-    amount?: number,
-  ) => Promise<void>;
-  onDealNextHand: () => Promise<void>;
+  onGameAction: (action: string, amount?: number) => void;
 }) {
-  const currentSeat = table.seats.find((seat) => seat.user?.fid === userFid);
+  const hand = getHandState(table, userId);
+
+  const [betAmount, setBetAmount] = useState<number>(
+    Math.max(hand.minRaise, hand.minBet),
+  );
+
+  const currentSeat = table.seats.find((seat) => seat.user?.id === userId);
   const occupied = occupiedSeats(table);
   const readyCount = table.seats.filter((seat) => seat.user && seat.isReady).length;
   const isFull = occupied >= table.maxPlayers;
-  const chat = useTableChat(table.id, user.fid);
-  const [draftMessage, setDraftMessage] = useState("");
-  const [reportedMessageIds, setReportedMessageIds] = useState<number[]>([]);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
-  const toCall = Math.max(0, table.currentBet - Number(currentSeat?.currentBet || 0));
-  const currentStack = Number(currentSeat?.stack || 0);
-  const isPlayersTurn = table.currentTurnFid === userFid;
-  const canAct = Boolean(currentSeat) && table.status === "in_game" && isPlayersTurn;
-  const isShowdown = table.phase === "showdown";
-  const heroCards = currentSeat?.holeCards ?? [];
-  const opponentSeats = table.seats.filter((seat) => seat.user && seat.user.fid !== userFid);
+  const isHeroTurn =
+    Boolean(currentSeat) &&
+    hand.currentTurnSeatNumber === currentSeat?.seatNumber;
 
-  // Sticky state to prevent hole cards and board from disappearing on state updates / polling overwrites
-  // Once we have seen them for this hand, keep them visible even if a subsequent state update has empty values.
-  const lastBoardRef = useRef<string[]>([]);
-  const lastHeroCardsRef = useRef<string[]>([]);
+  const heroIsSeated = Boolean(currentSeat);
+  const tableIsActive = table.status === "in_game" || table.status === "seated";
+  const canAct = heroIsSeated && tableIsActive && isHeroTurn;
 
-  // A new hand begins at preflop with no community cards, so don't let the
-  // previous hand's board "stick". Only fall back to the cached board on
-  // postflop streets, where a transient empty poll would otherwise blank it.
-  const displayBoard =
-    table.board.length > 0
-      ? table.board
-      : table.phase === "preflop"
-        ? []
-        : lastBoardRef.current;
-  const displayHeroCards =
-    heroCards.length > 0 ? heroCards : lastHeroCardsRef.current;
+  const visiblePlayers = table.seats.filter((seat) => seat.user);
 
-  // Cache the latest non-empty values after commit (don't mutate refs during render).
-  useEffect(() => {
-    if (table.phase === "preflop") {
-      lastBoardRef.current = [];
-    } else if (table.board.length > 0) {
-      lastBoardRef.current = table.board;
-    }
-  }, [table.phase, table.board]);
+  function submitAction(action: string) {
+    if (!canAct && action !== "check") return;
 
-  useEffect(() => {
-    if (heroCards.length > 0) lastHeroCardsRef.current = heroCards;
-  }, [heroCards]);
+    const amount =
+      action === "bet" || action === "raise"
+        ? betAmount
+        : action === "call"
+          ? hand.toCall
+          : undefined;
 
-  // NLHE raise amount with slider (not fixed limit)
-  const minRaise = toCall > 0 
-    ? table.currentBet + Math.max(1, toCall) 
-    : Math.max(1, Math.floor(table.potSize * 0.5) || 1);
-  const maxRaise = currentStack + (toCall > 0 ? (currentSeat?.currentBet || 0) : 0);
-  const [raiseAmount, setRaiseAmount] = useState(minRaise);
-
-  useEffect(() => {
-    setRaiseAmount(Math.max(minRaise, Math.min(maxRaise, raiseAmount || minRaise)));
-  }, [minRaise, maxRaise, table.id, isPlayersTurn]);
-
-  const visibleMessages = useMemo(
-    () => chat.messages.filter((message) => !chat.mutedFids.includes(message.fid)),
-    [chat.messages, chat.mutedFids],
-  );
-
-  const mutedPlayers = useMemo(() => {
-    const players = new Map<number, string>();
-    for (const message of chat.messages) {
-      if (chat.mutedFids.includes(message.fid) && !players.has(message.fid)) {
-        players.set(message.fid, message.username);
-      }
-    }
-    return Array.from(players.entries()).map(([fid, username]) => ({ fid, username }));
-  }, [chat.messages, chat.mutedFids]);
-
-  async function submitChatMessage() {
-    const trimmed = draftMessage.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    try {
-      await chat.sendMessage(user, trimmed);
-      setDraftMessage("");
-    } catch {
-      // The hook already surfaces the error state for the panel.
-    }
-  }
-
-  async function mutePlayer(targetFid: number) {
-    try {
-      await chat.mutePlayer(user, targetFid);
-    } catch {
-      // The hook already exposes the moderation error state.
-    }
-  }
-
-  async function unmutePlayer(targetFid: number) {
-    try {
-      await chat.unmutePlayer(user, targetFid);
-    } catch {
-      // The hook already exposes the moderation error state.
-    }
-  }
-
-  async function reportMessage(messageId: number, targetFid: number) {
-    try {
-      await chat.reportMessage(user, messageId, targetFid);
-      setReportedMessageIds((current) => (current.includes(messageId) ? current : [...current, messageId]));
-    } catch {
-      // The hook already exposes the moderation error state.
-    }
-  }
-
-  async function submitAction(
-    action: "fold" | "check" | "call" | "bet" | "raise" | "all_in",
-    amount?: number,
-  ) {
-    try {
-      setActionLoading(action);
-      setActionError(null);
-      await onAction(action, amount);
-    } catch (caughtError) {
-      setActionError(
-        caughtError instanceof Error ? caughtError.message : "Unable to play this action.",
-      );
-    } finally {
-      setActionLoading(null);
-    }
-  }
-
-  async function submitNextHand() {
-    try {
-      setActionLoading("deal");
-      setActionError(null);
-      await onDealNextHand();
-    } catch (caughtError) {
-      setActionError(
-        caughtError instanceof Error ? caughtError.message : "Unable to start the next hand.",
-      );
-    } finally {
-      setActionLoading(null);
-    }
+    onGameAction(action, amount);
   }
 
   return (
-    <div className="ls-view">
-      <div className="ls-view-header">
-        <div>
-          <p className="ls-eyebrow">Selected Table</p>
-          <h2>{table.name}</h2>
-          <p>
-            {table.game} · {table.stakes} · {occupied}/{table.maxPlayers} seated
-          </p>
-          <p>{formatStartTime(table.startTime)}</p>
-        </div>
-
-        <div className="ls-action-row">
+    <div className="ls-view ls-play-view">
+      <div className="ls-play-topbar" style={{ padding: '8px 12px', fontSize: '11px' }}>
+        <div className="ls-play-top-actions">
           {!currentSeat && (
             <button
               className="ls-primary-button"
               onClick={onJoin}
               disabled={isFull || table.status === "in_game"}
-              type="button"
             >
               {isFull ? "Full" : "Take Seat"}
             </button>
           )}
 
-          {currentSeat && supportsReadyState && (
-            <button
-              className="ls-secondary-button"
-              disabled={table.status === "in_game"}
-              onClick={onReady}
-              type="button"
-            >
-              {currentSeat.isReady ? "Unready" : "Ready"}
-            </button>
-          )}
+          {currentSeat && table.status !== "in_game" && (
+            <>
+              <button className="ls-secondary-button" onClick={onReady}>
+                {currentSeat.isReady ? "Unready" : "Ready"}
+              </button>
 
-          {currentSeat && (
-            <button
-              className="ls-danger-button"
-              onClick={onLeave}
-              disabled={table.status === "in_game"}
-              type="button"
-            >
-              Leave
-            </button>
+              <button className="ls-danger-button" onClick={onLeave}>
+                Leave
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {!supportsReadyState && (
-        <div className="ls-runtime-pill">
-          This table is running in the current Vercel-compatible fallback mode.
-        </div>
-      )}
-
-      <section className="ls-felt-table">
-        <div className="ls-dealer-core">
-          <span>♠</span>
-          <strong>{readyCount} ready</strong>
-          <small>
-            {table.status === "in_game" ? "Hand in progress" : "Waiting for players"}
-          </small>
-        </div>
-
-        <div className="ls-board-area">
-          <div className="ls-card-strip-header">
-            <strong>Board</strong>
-            <small>{table.phase === "preflop" ? "Waiting for flop" : table.phase}</small>
-          </div>
-          {displayBoard.length === 0 ? (
-            <div className="ls-card-strip-empty">No community cards yet.</div>
-          ) : (
-            <div className="ls-playing-cards-row">
-              {displayBoard.map((card, index) => {
-                const { rank, suitSymbol, isRed } = getCardDisplay(card);
-                return (
-                  <div
-                    key={`${card}-${index}`}
-                    className={isRed ? "ls-playing-card" + " red" : "ls-playing-card"}
-                  >
-                    {rank}
-                    {suitSymbol}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div className="ls-pot-pill">Pot {formatCurrency(table.potSize)}</div>
-        </div>
-
-        {opponentSeats.slice(0, 2).map((seat, index) => (
-          <div
-            key={`opponent-cards-${seat.seatNumber}`}
-            className={`ls-opponent-hand ls-opponent-hand-${index + 1}`}
-          >
-            {seat.holeCards.length > 0 ? (
-              seat.holeCards.map((card, cardIndex) => {
-                if (!isShowdown) {
-                  return <div key={`${seat.seatNumber}-${cardIndex}`} className="ls-card-back" />;
-                }
-
-                const { rank, suitSymbol, isRed } = getCardDisplay(card);
-                return (
-                  <div
-                    key={`${seat.seatNumber}-${cardIndex}`}
-                    className={isRed ? "ls-playing-card ls-playing-card-compact red" : "ls-playing-card ls-playing-card-compact"}
-                  >
-                    {rank}
-                    {suitSymbol}
-                  </div>
-                );
-              })
-            ) : (
-              <span className="ls-card-strip-empty">Waiting</span>
-            )}
-          </div>
-        ))}
-
-        {table.seats.map((seat) => (
-          <div key={seat.seatNumber} className={`ls-seat ls-seat-${seat.seatNumber}`}>
-            <div className={seat.user ? "ls-seat-avatar filled" : "ls-seat-avatar"}>
-              {seat.user?.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={seat.user.avatarUrl} alt={seat.user.displayName} />
-              ) : seat.user ? (
-                seat.user.displayName.slice(0, 1)
-              ) : (
-                seat.seatNumber
-              )}
+      <section className="ls-play-layout">
+        <div className="ls-play-main">
+          <div className="ls-board-stage">
+            <div className="ls-pot-orb">
+              <small>Pot</small>
+              <strong>{formatMoney(hand.pot)}</strong>
+              <span>{hand.street.toUpperCase()}</span>
             </div>
 
-            <strong>{seat.user?.displayName ?? "Open Seat"}</strong>
-            <small>
-              {seat.user
-                ? seat.isBot
-                  ? `Autoplay bot · ${formatCurrency(seat.stack)}`
-                  : seat.isReady
-                  ? "Ready"
-                  : `${formatCurrency(seat.stack)} stack`
-                : "Available"}
-            </small>
-          </div>
-        ))}
-        <div className="ls-hero-hand">
-          <div className="ls-card-strip-header">
-            <strong>Your hand</strong>
-            <small>{currentSeat ? `${formatCurrency(currentStack)} stack` : "Take a seat to get dealt in."}</small>
-          </div>
-          {!currentSeat ? (
-            <div className="ls-card-strip-empty">No seat yet.</div>
-          ) : displayHeroCards.length === 0 ? (
-            <div className="ls-card-strip-empty">Waiting for hole cards...</div>
-          ) : (
-            <div className="ls-playing-cards-row">
-              {displayHeroCards.map((card, index) => {
-                const { rank, suitSymbol, isRed } = getCardDisplay(card);
-                return (
-                  <div
-                    key={`${card}-${index}`}
-                    className={isRed ? "ls-playing-card ls-playing-card-hero red" : "ls-playing-card ls-playing-card-hero"}
-                  >
-                    {rank}
-                    {suitSymbol}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
+            <BoardCards cards={hand.boardCards} />
 
-      <section className="ls-table-info-grid">
-        <InfoTile label="Game" value={table.game} />
-        <InfoTile label="Stakes" value={table.stakes} />
-        <InfoTile label="Buy-in" value={formatCurrency(table.buyIn)} />
-        <InfoTile label="Status" value={getStatusLabel(table.status)} />
-      </section>
+            <HeroHoleCards cards={hand.heroHoleCards} isHeroTurn={isHeroTurn} />
 
-      {currentSeat && (
-        <section className="ls-action-panel">
-          <div className="ls-action-panel-header">
-            <div>
-              <p className="ls-eyebrow">Live Hand Controls</p>
-              <h3>{isShowdown ? "Hand complete" : isPlayersTurn ? "Your turn" : "Waiting on action"}</h3>
-            </div>
-            <small>
-              {isShowdown
-                ? "Start the next hand when you are ready."
-                : `To call ${formatCurrency(toCall)} · Stack ${formatCurrency(currentStack)}`}
-            </small>
-          </div>
-
-          {canAct && (
-            <div style={{ margin: '8px 0', padding: '8px', background: '#111', borderRadius: '4px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <label>Raise/Bet amount (NLHE):</label>
-                <input 
-                  type="number" 
-                  value={raiseAmount} 
-                  min={minRaise} 
-                  max={maxRaise}
-                  onChange={e => setRaiseAmount(Math.max(minRaise, Math.min(maxRaise, parseInt(e.target.value) || minRaise)))}
-                  style={{ width: '80px' }}
+            <div className="ls-table-orbit">
+              {table.seats.map((seat) => (
+                <PlayerSeatMini
+                  key={seat.seatNumber}
+                  seat={seat}
+                  isDealer={seat.seatNumber === hand.dealerSeatNumber}
+                  isSmallBlind={seat.seatNumber === hand.smallBlindSeatNumber}
+                  isBigBlind={seat.seatNumber === hand.bigBlindSeatNumber}
+                  isTurn={seat.seatNumber === hand.currentTurnSeatNumber}
+                  isHero={seat.user?.id === userId}
                 />
-              </div>
-              <input 
-                type="range" 
-                min={minRaise} 
-                max={maxRaise} 
-                step="1"
-                value={raiseAmount} 
-                onChange={e => setRaiseAmount(parseInt(e.target.value))}
-                style={{ width: '100%' }}
-              />
-              <div style={{ fontSize: '10px', color: '#888' }}>Min: {minRaise} | Max: {maxRaise} (stack)</div>
-            </div>
-          )}
-
-          {isShowdown ? (
-            <button
-              className="ls-primary-button"
-              disabled={actionLoading === "deal"}
-              onClick={() => void submitNextHand()}
-              type="button"
-            >
-              {actionLoading === "deal" ? "Starting…" : "Start Next Hand"}
-            </button>
-          ) : canAct ? (
-            <>
-              <div className="ls-action-grid">
-                <button
-                  className="ls-danger-button"
-                  disabled={actionLoading !== null}
-                  onClick={() => void submitAction("fold")}
-                  type="button"
-                >
-                  Fold
-                </button>
-                {toCall === 0 ? (
-                  <button
-                    className="ls-secondary-button"
-                    disabled={actionLoading !== null}
-                    onClick={() => void submitAction("check")}
-                    type="button"
-                  >
-                    Check
-                  </button>
-                ) : (
-                  <button
-                    className="ls-primary-button"
-                    disabled={actionLoading !== null}
-                    onClick={() => void submitAction("call", toCall)}
-                    type="button"
-                  >
-                    Call {formatCurrency(toCall)}
-                  </button>
-                )}
-              </div>
-
-              <div className="ls-action-grid ls-action-grid-compact">
-                {toCall === 0 ? (
-                  <>
-                    <button
-                      className="ls-secondary-button"
-                      disabled={actionLoading !== null}
-                      onClick={() => { const amt = minRaise; setRaiseAmount(amt); void submitAction("bet", amt); }}
-                      type="button"
-                    >
-                      Bet Min
-                    </button>
-                    <button
-                      className="ls-secondary-button"
-                      disabled={actionLoading !== null}
-                      onClick={() => { const pot = Math.min(maxRaise, Math.max(1, table.potSize)); setRaiseAmount(pot); void submitAction("bet", pot); }}
-                      type="button"
-                    >
-                      Bet Pot
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      className="ls-secondary-button"
-                      disabled={actionLoading !== null}
-                      onClick={() => { const amt = minRaise; setRaiseAmount(amt); void submitAction("raise", amt); }}
-                      type="button"
-                    >
-                      Min Raise
-                    </button>
-                    <button
-                      className="ls-secondary-button"
-                      disabled={actionLoading !== null}
-                      onClick={() => { const p = Math.min(maxRaise, Math.max(minRaise, table.potSize + toCall)); setRaiseAmount(p); void submitAction("raise", p); }}
-                      type="button"
-                    >
-                      Raise Pot
-                    </button>
-                  </>
-                )}
-                <button
-                  className="ls-primary-button"
-                  disabled={actionLoading !== null}
-                  onClick={() => void submitAction("all_in", currentStack)}
-                  type="button"
-                >
-                  All In
-                </button>
-                <button
-                  className="ls-primary-button"
-                  disabled={actionLoading !== null}
-                  onClick={() => void submitAction(toCall > 0 ? "raise" : "bet", raiseAmount)}
-                  type="button"
-                >
-                  {toCall > 0 ? "Raise" : "Bet"} to {raiseAmount} (slider)
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="ls-runtime-pill">
-              {table.status !== "in_game"
-                ? "The practice hand will start automatically after you take your seat."
-                : "The bot or other player is acting. Controls unlock when the turn reaches you."}
-            </div>
-          )}
-
-          {actionError && <div className="ls-error">{actionError}</div>}
-        </section>
-      )}
-
-      <section className="ls-chat-panel">
-        <div className="ls-chat-header">
-          <div>
-            <p className="ls-eyebrow">Table Chat</p>
-            <h3>Rail talk</h3>
-          </div>
-          <small>{currentSeat ? "Seated players can post." : "Take a seat to join chat."}</small>
-        </div>
-
-        {mutedPlayers.length > 0 && (
-          <div className="ls-chat-muted-row">
-            <small>Muted players</small>
-            <div className="ls-chat-muted-list">
-              {mutedPlayers.map((player) => (
-                <button
-                  key={player.fid}
-                  className="ls-chat-chip"
-                  disabled={chat.moderating === player.fid}
-                  onClick={() => void unmutePlayer(player.fid)}
-                  type="button"
-                >
-                  {chat.moderating === player.fid ? `Updating ${player.username}…` : `Unmute ${player.username}`}
-                </button>
               ))}
             </div>
           </div>
-        )}
 
-        <div className="ls-chat-stream">
-          {chat.loading && visibleMessages.length === 0 && (
-            <div className="ls-empty-card">
-              <strong>Loading table chat…</strong>
-              <p>Pulling the latest messages from the current table.</p>
+          <ActionControls
+            canAct={canAct}
+            legalActions={hand.legalActions}
+            toCall={hand.toCall}
+            minBet={hand.minBet}
+            minRaise={hand.minRaise}
+            betAmount={betAmount}
+            setBetAmount={setBetAmount}
+            onAction={submitAction}
+          />
+        </div>
+
+        <aside className="ls-play-rail">
+          <section className="ls-play-panel">
+            <div className="ls-player-list">
+              {visiblePlayers.map((seat) => (
+                <PlayerRow
+                  key={seat.seatNumber}
+                  seat={seat}
+                  isTurn={seat.seatNumber === hand.currentTurnSeatNumber}
+                  isHero={seat.user?.id === userId}
+                />
+              ))}
             </div>
-          )}
+          </section>
 
-          {!chat.loading && visibleMessages.length === 0 && mutedPlayers.length === 0 && (
-            <div className="ls-empty-card">
-              <strong>No table chat yet.</strong>
-              <p>Break the silence with a quick GLHF once you take a seat.</p>
+          <section className="ls-play-panel">
+            <ActionLog items={hand.actionLog} />
+          </section>
+
+          <section className="ls-play-panel">
+            <div className="ls-hand-info-grid">
+              <InfoTile label="To Call" value={formatMoney(hand.toCall)} />
+              <InfoTile label="Min Bet" value={formatMoney(hand.minBet)} />
+              <InfoTile label="Min Raise" value={formatMoney(hand.minRaise)} />
+              <InfoTile label="Street" value={hand.street} />
             </div>
-          )}
+          </section>
+        </aside>
+      </section>
+    </div>
+  );
+}
 
-          {!chat.loading && visibleMessages.length === 0 && mutedPlayers.length > 0 && (
-            <div className="ls-empty-card">
-              <strong>All current chat is muted.</strong>
-              <p>Use the muted-player pills above to restore messages from specific players.</p>
-            </div>
-          )}
+function BoardCards({ cards }: { cards: PlayingCard[] }) {
+  const emptySlots = Math.max(0, 5 - cards.length);
 
-          {visibleMessages.map((message) => {
-            const isSelf = message.fid === user.fid;
-            const isReported = reportedMessageIds.includes(message.id);
+  return (
+    <div className="ls-board-cards">
+      {cards.map((card, index) => (
+        <CardFace key={`${card.rank}-${card.suit}-${index}`} card={card} size="board" />
+      ))}
+
+      {Array.from({ length: emptySlots }).map((_, index) => (
+        <div key={`empty-board-${index}`} className="ls-card-empty">
+          <span />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HeroHoleCards({
+  cards,
+  isHeroTurn,
+}: {
+  cards: PlayingCard[];
+  isHeroTurn: boolean;
+}) {
+  return (
+    <div className={isHeroTurn ? "ls-hero-hand active" : "ls-hero-hand"}>
+      <div className="ls-hole-card-row">
+        {cards.map((card, index) => (
+          <CardFace key={`${card.rank}-${card.suit}-${index}`} card={card} size="hole" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CardFace({
+  card,
+  size,
+}: {
+  card: PlayingCard;
+  size: "board" | "hole";
+}) {
+  return (
+    <div className={`ls-card-face ${size} ${getCardColor(card)}`}>
+      <b>{card.rank}</b>
+      <span>{card.suit}</span>
+    </div>
+  );
+}
+
+function ActionControls({
+  canAct,
+  legalActions,
+  toCall,
+  minBet,
+  minRaise,
+  betAmount,
+  setBetAmount,
+  onAction,
+}: {
+  canAct: boolean;
+  legalActions: GameActionType[];
+  toCall: number;
+  minBet: number;
+  minRaise: number;
+  betAmount: number;
+  setBetAmount: (value: number) => void;
+  onAction: (action: string) => void;
+}) {
+  const canFold = legalActions.includes("fold");
+  const canCheck = legalActions.includes("check");
+  const canCall = legalActions.includes("call");
+  const canBet = legalActions.includes("bet");
+  const canRaise = legalActions.includes("raise");
+  const canAllIn = legalActions.includes("all_in");
+
+  const minAggressiveAmount = canRaise ? minRaise : minBet;
+
+  return (
+    <section className={canAct ? "ls-action-dock active" : "ls-action-dock"}>
+      <div className="ls-action-status">
+        <div>
+          <small>Decision</small>
+          <strong>{canAct ? "Action is on you" : "Waiting for action"}</strong>
+        </div>
+
+        <div>
+          <small>To Call</small>
+          <strong>{formatMoney(toCall)}</strong>
+        </div>
+      </div>
+
+      <div className="ls-bet-slider">
+        <div className="ls-bet-slider-top">
+          <span>Bet / Raise Amount</span>
+          <strong>{formatMoney(betAmount)}</strong>
+        </div>
+
+        <input
+          type="range"
+          min={minAggressiveAmount}
+          max={500}
+          step={1}
+          value={betAmount}
+          disabled={!canAct || (!canBet && !canRaise)}
+          onChange={(event) => setBetAmount(Number(event.target.value))}
+        />
+
+        <div className="ls-bet-presets">
+          {[0.33, 0.5, 0.75, 1].map((fraction) => {
+            const value = Math.max(minAggressiveAmount, Math.round(84.5 * fraction));
+
             return (
-              <article
-                key={message.id}
-                className={isSelf ? "ls-chat-message self" : "ls-chat-message"}
+              <button
+                key={fraction}
+                disabled={!canAct || (!canBet && !canRaise)}
+                onClick={() => setBetAmount(value)}
               >
-                <div className="ls-chat-avatar">
-                  {message.pfpUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={message.pfpUrl} alt={message.username} />
-                  ) : (
-                    message.username.slice(0, 1).toUpperCase()
-                  )}
-                </div>
-
-                <div className="ls-chat-bubble">
-                  <div className="ls-chat-meta">
-                    <strong>{message.username}</strong>
-                    <span>
-                      {message.isBot ? "Bot" : "Player"} · {formatChatTime(message.createdAt)}
-                    </span>
-                  </div>
-                  <p>{message.message}</p>
-                  {!isSelf && !message.isBot && currentSeat && (
-                    <div className="ls-chat-moderation-row">
-                      <button
-                        className="ls-chat-inline-action"
-                        disabled={chat.moderating === message.fid || chat.mutedFids.includes(message.fid)}
-                        onClick={() => void mutePlayer(message.fid)}
-                        type="button"
-                      >
-                        {chat.mutedFids.includes(message.fid)
-                          ? "Muted"
-                          : chat.moderating === message.fid
-                            ? "Muting…"
-                            : "Mute"}
-                      </button>
-                      <button
-                        className="ls-chat-inline-action"
-                        disabled={chat.moderating === message.fid || isReported}
-                        onClick={() => void reportMessage(message.id, message.fid)}
-                        type="button"
-                      >
-                        {isReported
-                          ? "Reported"
-                          : chat.moderating === message.fid
-                            ? "Reporting…"
-                            : "Report"}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </article>
+                {fraction === 1 ? "Pot" : `${Math.round(fraction * 100)}%`}
+              </button>
             );
           })}
         </div>
+      </div>
 
-        <form
-          className="ls-chat-composer"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submitChatMessage();
-          }}
+      <div className="ls-action-buttons">
+        <button
+          className="ls-action-fold"
+          disabled={!canAct || !canFold}
+          onClick={() => onAction("fold")}
         >
-          <textarea
-            className="ls-chat-input"
-            disabled={!currentSeat || chat.sending}
-            maxLength={280}
-            onChange={(event) => setDraftMessage(event.target.value)}
-            placeholder={
-              currentSeat
-                ? "Type table chat…"
-                : "Take a seat before posting in table chat."
-            }
-            value={draftMessage}
-          />
+          Fold
+        </button>
 
-          <div className="ls-chat-actions">
-            <small>{draftMessage.trim().length}/280</small>
-            <button
-              className="ls-primary-button"
-              disabled={!currentSeat || chat.sending || draftMessage.trim().length === 0}
-              type="submit"
-            >
-              {chat.sending ? "Sending…" : "Send"}
-            </button>
-          </div>
-        </form>
+        {canCheck ? (
+          <button
+            className="ls-action-neutral"
+            disabled={!canAct}
+            onClick={() => onAction("check")}
+          >
+            Check
+          </button>
+        ) : (
+          <button
+            className="ls-action-neutral"
+            disabled={!canAct || !canCall}
+            onClick={() => onAction("call")}
+          >
+            Call {formatMoney(toCall)}
+          </button>
+        )}
 
-        {chat.error && <div className="ls-error">{chat.error}</div>}
-      </section>
+        {canBet && (
+          <button
+            className="ls-action-primary"
+            disabled={!canAct}
+            onClick={() => onAction("bet")}
+          >
+            Bet {formatMoney(betAmount)}
+          </button>
+        )}
+
+        {canRaise && (
+          <button
+            className="ls-action-primary"
+            disabled={!canAct}
+            onClick={() => onAction("raise")}
+          >
+            Raise {formatMoney(betAmount)}
+          </button>
+        )}
+
+        <button
+          className="ls-action-allin"
+          disabled={!canAct || !canAllIn}
+          onClick={() => onAction("all_in")}
+        >
+          All In
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function PlayerSeatMini({
+  seat,
+  isDealer,
+  isSmallBlind,
+  isBigBlind,
+  isTurn,
+  isHero,
+}: {
+  seat: PokerTable["seats"][number];
+  isDealer: boolean;
+  isSmallBlind: boolean;
+  isBigBlind: boolean;
+  isTurn: boolean;
+  isHero: boolean;
+}) {
+  return (
+    <div
+      className={[
+        "ls-orbit-seat",
+        `seat-${seat.seatNumber}`,
+        seat.user ? "filled" : "",
+        isTurn ? "turn" : "",
+        isHero ? "hero" : "",
+      ].join(" ")}
+    >
+      <div className="ls-orbit-avatar">
+        {seat.user?.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={seat.user.avatarUrl} alt={seat.user.displayName} />
+        ) : seat.user ? (
+          seat.user.displayName.slice(0, 1)
+        ) : (
+          seat.seatNumber
+        )}
+      </div>
+
+      <strong>{seat.user?.displayName ?? "Open"}</strong>
+
+      <small>
+        {isDealer ? "D" : isSmallBlind ? "SB" : isBigBlind ? "BB" : ""}
+        {seat.user ? ` · ${formatMoney(seat.stack)}` : ""}
+      </small>
+    </div>
+  );
+}
+
+function PlayerRow({
+  seat,
+  isTurn,
+  isHero,
+}: {
+  seat: PokerTable["seats"][number];
+  isTurn: boolean;
+  isHero: boolean;
+}) {
+  if (!seat.user) return null;
+
+  return (
+    <div className={isTurn ? "ls-player-row turn" : "ls-player-row"}>
+      <div className="ls-rank-avatar">
+        {seat.user.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={seat.user.avatarUrl} alt={seat.user.displayName} />
+        ) : (
+          seat.user.displayName.slice(0, 1)
+        )}
+      </div>
+
+      <div>
+        <strong>
+          {seat.user.displayName}
+          {isHero ? "  · You" : ""}
+        </strong>
+        <small>
+          Seat {seat.seatNumber} · {seat.isReady ? "Ready" : "Not ready"}
+        </small>
+      </div>
+
+      <b>{formatMoney(seat.stack)}</b>
+    </div>
+  );
+}
+
+function ActionLog({ items }: { items: ActionLogItem[] }) {
+  if (items.length === 0) {
+    return <p className="ls-empty-log">No actions yet.</p>;
+  }
+
+  return (
+    <div className="ls-action-log">
+      {[...items].reverse().map((item) => (
+        <div key={item.id}>
+          <span>Seat {item.seatNumber}</span>
+          <strong>{item.playerName}</strong>
+          <p>{getActionLabel(item.action, item.amount)}</p>
+        </div>
+      ))}
     </div>
   );
 }

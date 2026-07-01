@@ -29,6 +29,12 @@ Configure your keys:
 *   `TURSO_DATABASE_URL`: Turso DB Connection URI (`TURSO_CONNECTION_URL` is also accepted for backwards compatibility)
 *   `TURSO_AUTH_TOKEN`: Turso DB Access Token
 
+**For production persistence on Farcaster (recommended):**
+*   Deploy a dedicated lobby service (real-time state, WS, game actions) to **Render.com**.
+*   Set `NEXT_PUBLIC_RENDER_API_URL` and `NEXT_PUBLIC_RENDER_WS_URL` (pointing to your Render service).
+*   The frontend on **Vercel** will use Render for authoritative table state (hands, board, actions between hands).
+*   This ensures reliable persistence in the Farcaster mini-app context.
+
 ### 3. Running in Development
 Run the local dev server:
 ```bash

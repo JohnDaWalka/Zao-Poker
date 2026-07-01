@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: zao-poker-lobby
+    env: node
+    region: oregon
+    plan: starter  # or free if available
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+    healthCheckPath: /health
+    autoDeploy: true

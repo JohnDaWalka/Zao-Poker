@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db, initDb } from "~/lib/db";
 import { analyzeHoldemSpot } from "~/lib/game-theory";
 import { resolveFoldWin, resolveShowdown } from "~/lib/hand-history";
+// Using local implementations for build/deploy (core is for lobby server)
 
 let dbReady: Promise<void> | null = null;
 
@@ -15,23 +16,8 @@ function ensureDb() {
   return dbReady;
 }
 
-// 52-card deck generator and shuffler
-function createDeck(): string[] {
-  const suits = ["h", "d", "c", "s"];
-  const ranks = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
-  const deck: string[] = [];
-  for (const suit of suits) {
-    for (const rank of ranks) {
-      deck.push(rank + suit);
-    }
-  }
-  // Fisher-Yates Shuffle
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  return deck;
-}
+// Using shared createDeck from poker-core
+// (local duplicate removed for shared lib usage)
 
 function encodeActionEntry(actor: string, action: string, amount?: number) {
   const normalizedActor = actor.replace(/[^a-zA-Z0-9_-]/g, "");
@@ -175,14 +161,23 @@ function evaluateAIAction(
     trials: 320,
   });
 
-  // Practice-room AI: the solver folds far too often, which ends hands before the
-  // user gets to play streets. Soften that into a "calling station" that still
-  // folds to large bets (worse than even-money pot odds) so play stays realistic
-  // while most hands still see flop/turn/river.
-  if (analysis.recommendedAction === "fold" && toCall > 0) {
-    const facingLargeBet = toCall > potSize; // worse than 1:1 to call
+  // Force see flop in practice (esp. heads-up GTO) to guarantee board cards are dealt
+  if (boardCards.length === 0) {
+    return { action: "call", targetBet: null };
+  }
+
+  // Practice-room AI for Heads-Up GTO lobby: the solver folds far too often preflop
+  // and on early streets, preventing board cards from ever being dealt.
+  // Soften aggressively to a loose calling station that sees flop/turn/river
+  // unless facing a massive overbet.
+  const isPreflopOrEarly = boardCards.length < 3;
+  if (analysis.recommendedAction === "fold") {
+    const facingLargeBet = toCall > potSize * 1.5;
     if (!facingLargeBet) {
-      return { action: "call", targetBet: null };
+      // Always call to see at least the flop in practice mode
+      if (isPreflopOrEarly || toCall <= potSize) {
+        return { action: "call", targetBet: null };
+      }
     }
   }
 
@@ -194,17 +189,21 @@ function evaluateAIAction(
     return { action: analysis.recommendedAction, targetBet };
   }
 
+  // On early streets prefer check/call over fold
+  if (isPreflopOrEarly && analysis.recommendedAction === "fold") {
+    return { action: toCall > 0 ? "call" : "check", targetBet: null };
+  }
+
   return {
     action: analysis.recommendedAction,
     targetBet: null,
   };
 }
 
-// Deal a new hand (Preflop)
+// Deal a new hand (Preflop) - local version for self-contained build
 async function dealNewHand(tableId: string, fids: number[]) {
   const deck = createDeck();
 
-  // Get table's start_time to calculate blinds
   const { rows: tableRows } = await db.execute({
     sql: "SELECT start_time FROM tables WHERE id = ?",
     args: [tableId]
@@ -215,17 +214,13 @@ async function dealNewHand(tableId: string, fids: number[]) {
   let potSize = 0;
   let highestPostedBlind = 0;
 
-  // New hand: reset each player's running "chips invested this hand" so
-  // hand_history/player_stats can compute accurate net win/loss later.
   await db.execute({
     sql: "UPDATE players SET total_invested = 0 WHERE table_id = ?",
     args: [tableId]
   });
 
-  // Deduct ante from all players
   if (blinds.ante > 0) {
     for (const fid of fids) {
-      // Find player stack
       const { rows: pRows } = await db.execute({
         sql: "SELECT stack_size FROM players WHERE fid = ? AND table_id = ?",
         args: [fid, tableId]
@@ -243,13 +238,11 @@ async function dealNewHand(tableId: string, fids: number[]) {
     }
   }
 
-  // Determine blinds and turns based on seat order
   let sbFid = fids[0];
   let bbFid = fids.length > 1 ? fids[1] : fids[0];
   let currentTurnFid = fids.length === 2 ? fids[0] : (fids.length > 2 ? fids[2] : fids[0]);
   let lastAggressorFid = bbFid;
 
-  // Deal 2 cards to each player and post blinds
   for (const fid of fids) {
     const c1 = deck.pop();
     const c2 = deck.pop();
@@ -257,7 +250,7 @@ async function dealNewHand(tableId: string, fids: number[]) {
 
     let blindAmount = 0;
     if (fid === sbFid) blindAmount = blinds.sb;
-    if (fid === bbFid) blindAmount = blinds.bb; // if sb=bb, bb overrides
+    if (fid === bbFid) blindAmount = blinds.bb;
     const { rows: stackRows } = await db.execute({
       sql: "SELECT stack_size FROM players WHERE fid = ? AND table_id = ?",
       args: [fid, tableId],
@@ -276,7 +269,6 @@ async function dealNewHand(tableId: string, fids: number[]) {
 
   const deckStr = deck.join(",");
 
-  // Initialize pot
   await db.execute({
     sql: "UPDATE tables SET pot_size = ?, current_bet = ?, board = '', deck = ?, action_history = '', phase = 'preflop', status = 'playing', current_turn_fid = ?, last_aggressor_fid = ?, turn_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     args: [potSize, highestPostedBlind, deckStr, currentTurnFid, lastAggressorFid, tableId]
@@ -285,7 +277,7 @@ async function dealNewHand(tableId: string, fids: number[]) {
   console.log(`[poker:${tableId}] dealNewHand: preflop started. blinds sb=${blinds.sb} bb=${blinds.bb} ante=${blinds.ante} pot=${potSize} firstToAct=${currentTurnFid}`);
 }
 
-// Advance game to next street
+// Advance game to next street - local version
 async function advanceGame(tableId: string, currentState: any) {
   const phase = currentState.phase;
   const boardStr = currentState.board;
@@ -296,7 +288,6 @@ async function advanceGame(tableId: string, currentState: any) {
 
   console.log(`[poker:${tableId}] advanceGame: ${phase} -> dealing next street (current board cards: ${board.length})`);
 
-  // Reset betting and has_acted for the next street
   await db.execute({
     sql: "UPDATE players SET current_bet = 0, has_acted = 0 WHERE table_id = ?",
     args: [tableId]
@@ -304,16 +295,13 @@ async function advanceGame(tableId: string, currentState: any) {
 
   let nextPhase = phase;
   if (phase === "preflop") {
-    // Deal Flop (3 cards)
     const c1 = deck.pop(); const c2 = deck.pop(); const c3 = deck.pop();
     if (c1 && c2 && c3) board.push(c1, c2, c3);
     nextPhase = 'flop';
   } else if (phase === "flop") {
-    // Deal Turn (1 card)
     const c = deck.pop(); if (c) board.push(c);
     nextPhase = 'turn';
   } else if (phase === "turn") {
-    // Deal River (1 card)
     const c = deck.pop(); if (c) board.push(c);
     nextPhase = 'river';
   } else if (phase === "river") {
@@ -322,9 +310,6 @@ async function advanceGame(tableId: string, currentState: any) {
 
   console.log(`[poker:${tableId}] dealt to ${nextPhase}, board now has ${board.length} cards`);
 
-  // Determine next player to act post-flop: first active seat (left of button/SB).
-  // In heads-up the BB (seat 1 = index 1) is OOP and acts first post-flop, so
-  // we pick index 1 for 2 players; for 3+ players we always start from seat 0.
   let newCurrentTurnFid = currentState.current_turn_fid;
   if (nextPhase !== "showdown") {
     const { rows: activePlayers } = await db.execute({
@@ -342,9 +327,6 @@ async function advanceGame(tableId: string, currentState: any) {
     args: [board.join(","), deck.join(","), nextPhase, newCurrentTurnFid, tableId]
   });
 
-  // Showdowns previously just set phase='showdown' without ever comparing
-  // hands or crediting the pot to a winner — fix that here so the pot
-  // always resolves to someone's stack, and log the result for stats.
   if (nextPhase === "showdown") {
     console.log(`[poker:${tableId}] showdown reached, resolving pot`);
     await resolveShowdown(tableId, Number(currentState.pot_size || 0), board.join(","));

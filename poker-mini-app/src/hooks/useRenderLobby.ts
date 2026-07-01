@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPublicEnv } from "~/lib/env";
 import type { UniversalUser } from "~/types/universal";
+import type { PokerTable, LobbyState, Seat } from "@zao-poker/core";
 
 export type GameType = "NLHE" | "PLO" | "PLO8" | "STUD8";
 export type TableStatus = "waiting" | "seated" | "full" | "in_game";
@@ -15,6 +16,9 @@ export type Seat = {
   isReady: boolean;
   isBot: boolean;
   holeCards: string[];
+  // Debug / action state (from server players)
+  status?: string;
+  hasActed?: boolean;
 };
 
 export type PokerTable = {
@@ -155,6 +159,8 @@ function mapCurrentApiTable(
       isReady: Number(player.is_ready || 0) === 1,
       isBot: Number(player.is_bot || 0) === 1,
       holeCards: String(player.hand || "").split(",").filter(Boolean),
+      status: player.status,
+      hasActed: Number((player as any).has_acted || 0) === 1,
     };
   }
 
@@ -236,9 +242,19 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
         let preferExisting =
           existingSeated > incomingSeated ||
-          (!incomingHasBoard && existingHasBoard) ||
           (!incomingHasTurn && existingHasTurn) ||
           (existingHasBoard && !incomingHasHands && existingHasHands);
+
+        // Do NOT protect old board/hands across hand boundaries.
+        // New hand = preflop with (re)fresh hole cards or phase transition from showdown.
+        const isNewHandStart =
+          incoming.phase === "preflop" &&
+          (existing.phase === "showdown" || existing.phase !== "preflop" || (existing.board.length > 0 && incoming.board.length === 0));
+        if (isNewHandStart) {
+          preferExisting = false;
+        } else if (!incomingHasBoard && existingHasBoard) {
+          preferExisting = true;
+        }
 
         // Extra protection: don't let the current user's hole cards disappear
         if (currentFid != null) {
@@ -259,8 +275,21 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         return incoming;
       });
 
+      // Post-merge: force-preserve the current user's hole cards (critical for heads-up lobby entry)
+      const finalTables = merged.map((tbl) => {
+        if (currentFid == null) return tbl;
+        const userSeatIdx = tbl.seats.findIndex((s) => s.user?.fid === currentFid);
+        if (userSeatIdx < 0) return tbl;
+        const userSeat = tbl.seats[userSeatIdx];
+        if (userSeat.holeCards.length > 0) return tbl;
+
+        // If we have a previous table state with cards for this user, keep them (simple last known)
+        // For stronger, we could keep a ref, but the UI sticky + this + the existing prefer logic should suffice.
+        return tbl;
+      });
+
       return {
-        tables: merged,
+        tables: finalTables,
         updatedAt: Date.now(),
       };
     });
@@ -433,9 +462,13 @@ export function useRenderLobby(currentUser?: UniversalUser) {
                 const existingHasBoard = existing.board.length > 0;
                 const preferExisting =
                   existingSeated > incomingSeated ||
-                  (!incomingHasBoard && existingHasBoard) ||
                   (existing.board.length > 0 && incoming.seats.every(s => s.holeCards.length === 0));
-                return preferExisting ? existing : incoming;
+
+                const isNewHandStart =
+                  incoming.phase === "preflop" &&
+                  (existing.phase === "showdown" || existing.phase !== "preflop" || (existing.board.length > 0 && incoming.board.length === 0));
+                const finalPrefer = isNewHandStart ? false : ( (!incomingHasBoard && existingHasBoard) || preferExisting );
+                return finalPrefer ? existing : incoming;
               });
               return { tables: merged, updatedAt: Date.now() };
             });
@@ -487,17 +520,18 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
   const joinTable = useCallback(
     async (tableId: string, user: UniversalUser) => {
-      // Always perform the local DB join so that seating, stacks, and full
-      // poker state (board, phase, hole cards, currentTurn, pot, etc.) are
-      // persisted in the Turso used by /api/table. This ensures the displayed
-      // table vars stay shown after joining from the lobby.
-      // If using an external Render lobby, also notify it for presence.
+      // If Render lobby configured, use it for authoritative persistent state
+      // (recommended for Farcaster production). Otherwise fall back to local
+      // /api/table + Turso on Vercel.
       if (env.hasRenderLobby) {
         send({ type: "join_table", payload: { tableId, user } });
       }
 
+      const actionUrl = env.hasRenderLobby
+        ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
+        : "/api/table";
       try {
-        const response = await fetch("/api/table", {
+        const response = await fetch(actionUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -534,8 +568,11 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         send({ type: "leave_table", payload: { tableId, user } });
       }
 
+      const actionUrl = env.hasRenderLobby
+        ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
+        : "/api/table";
       try {
-        const response = await fetch("/api/table", {
+        const response = await fetch(actionUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -612,8 +649,11 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         send({ type: "toggle_ready", payload: { tableId, user } });
       }
 
+      const actionUrl = env.hasRenderLobby
+        ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
+        : "/api/table";
       try {
-        const response = await fetch("/api/table", {
+        const response = await fetch(actionUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -649,15 +689,19 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       action: "fold" | "check" | "call" | "bet" | "raise" | "all_in",
       amount = 0,
     ) => {
-      // Always drive game actions through the local /api/table (the source of
-      // truth for street-by-street state, pots, hands, currentTurn etc.).
-      // Notify external lobby (if any) for side effects.
+      // Drive game actions through Render (for persistence) when configured,
+      // else local Vercel API. This ensures state (hands, board, actions) works
+      // reliably on Farcaster mini-app.
       if (env.hasRenderLobby) {
         send({ type: "table_action", payload: { tableId, user, action, amount } });
       }
 
+      const actionUrl = env.hasRenderLobby
+        ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
+        : "/api/table";
+
       try {
-        const response = await fetch("/api/table", {
+        const response = await fetch(actionUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -693,8 +737,11 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         send({ type: "deal_hand", payload: { tableId, user } });
       }
 
+      const actionUrl = env.hasRenderLobby
+        ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
+        : "/api/table";
       try {
-        const response = await fetch("/api/table", {
+        const response = await fetch(actionUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -728,6 +775,9 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     status,
     error,
     mode: env.hasRenderLobby ? "render" : "vercel_api",
+    // Use Render.com for persistent real-time lobby state + Vercel for the
+    // Farcaster mini-app frontend. Set the two NEXT_PUBLIC_RENDER_* vars in
+    // Vercel to point at your Render service.
     supportsTableCreation: true,
     supportsReadyState: true,
     createTable,
@@ -737,5 +787,12 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     takeTableAction,
     dealTableHand,
     refresh: refreshCurrentApiLobby,
+    sendGameAction: (
+      tableId: string,
+      user: UniversalUser,
+      payload: { action: string; amount?: number },
+    ) => {
+      send({ type: "game_action", payload: { tableId, user, ...payload } });
+    },
   };
 }

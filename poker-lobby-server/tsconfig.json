@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "allowImportingTsExtensions": false,
+    "noEmit": false,
+    "paths": {
+      "@zao-poker/core": [
+        "../packages/poker-core/src"
+      ],
+      "@zao-poker/core/*": [
+        "../packages/poker-core/src/*"
+      ]
+    }
+  },
+  "include": ["src/**/*"]
+}

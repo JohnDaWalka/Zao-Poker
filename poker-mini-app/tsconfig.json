@@ -25,6 +25,12 @@
     "paths": {
       "~/*": [
         "./src/*"
+      ],
+      "@zao-poker/core": [
+        "../../packages/poker-core/src"
+      ],
+      "@zao-poker/core/*": [
+        "../../packages/poker-core/src/*"
       ]
     }
   },

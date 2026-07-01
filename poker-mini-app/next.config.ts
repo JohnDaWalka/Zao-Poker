@@ -11,8 +11,7 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  // This lives in a monorepo alongside other projects (AI-Poker-Coach, LeakSnipe
-  // desktop HUD, etc.), each with their own lockfile. Turbopack's automatic
+  // This lives in a monorepo alongside other projects (AI-Poker-Coach, desktop HUD, etc.), each with their own lockfile. Turbopack's automatic
   // workspace-root inference can walk up past this directory and pick one
   // of those as the root instead, then fail to find `src/app` at all.
   // Pin it explicitly so the build is never ambiguous.
