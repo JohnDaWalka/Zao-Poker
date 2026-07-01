@@ -1237,6 +1237,20 @@ function LobbyView({
   );
 }
 
+function SeatDots({ table }: { table: PokerTable }) {
+  return (
+    <div className="ls-seat-dots">
+      {table.seats.map((seat) => (
+        <span
+          key={seat.seatNumber}
+          className={seat.user ? "filled" : ""}
+          title={seat.user?.displayName ?? `Seat ${seat.seatNumber}`}
+        />
+      ))}
+    </div>
+  );
+}
+
 // --- New Action-first table UI (replaces old TableView) ---
 
 type CardSuit = "♠" | "♥" | "♦" | "♣";
