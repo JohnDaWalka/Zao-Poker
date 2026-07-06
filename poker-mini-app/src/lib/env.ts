@@ -1,4 +1,5 @@
-// Validation warns instead of throwing: this runs on a live production app,
+// Deploy trigger: VERCEL_TOKEN configured — workflow should auto-deploy on next push
+
 // and a missing var (e.g. a newly-added one not yet set in Vercel) must
 // degrade a feature, not crash the whole mini app.
 function warnIfMissing(scope: string, vars: Record<string, string | undefined>) {
