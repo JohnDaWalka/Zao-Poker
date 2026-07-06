@@ -39,12 +39,19 @@ jobs:
           else
             echo "Warning: VERCEL_ORG_ID and VERCEL_PROJECT_ID not set. Deploy may fail if project is not linked."
           fi
+      - name: Verify Vercel Token
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npm install -g vercel@37.0.0
+          echo "Checking Vercel token..."
+          vercel whoami --token "$VERCEL_TOKEN" || echo "Token verification failed"
+          echo "Checking project access..."
+          vercel project ls --token "$VERCEL_TOKEN" 2>&1 | head -20 || echo "Project listing failed"
       - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           cd poker-mini-app
-          # Pin Vercel CLI to a known stable version to avoid latest bugs
-          npm install -g vercel@37.0.0
           echo "Deploying with Vercel CLI..."
           vercel deploy --prod --yes --token "$VERCEL_TOKEN" 2>&1
