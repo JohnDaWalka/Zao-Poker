@@ -9,10 +9,6 @@ on:
       - ".github/workflows/deploy-poker-mini-app-vercel.yml"
   workflow_dispatch:
 
-concurrency:
-  group: deploy-poker-mini-app-production
-  cancel-in-progress: true
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
