@@ -540,19 +540,7 @@ export default function ZaoPokerUI() {
               onLeave={() => leaveTable(activeTable)}
               onReady={() => toggleReady(activeTable)}
               onGameAction={(action, amount) => {
-                const lobbyWithActions = lobby as typeof lobby & {
-                  sendGameAction?: (
-                    tableId: string,
-                    user: UniversalUser,
-                    payload: { action: string; amount?: number },
-                  ) => void;
-                };
-                lobbyWithActions.sendGameAction?.(activeTable.id, user, {
-                  action,
-                  amount,
-                });
-                // Also call local for compatibility
-                playTableAction(activeTable, action as any, amount);
+                playTableAction(activeTable, action, amount);
               }}
               onDealNextHand={() => dealNextHand(activeTable)}
             />

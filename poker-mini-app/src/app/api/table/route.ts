@@ -29,6 +29,18 @@ function ensureDb() {
   return dbReady;
 }
 
+async function withTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  await db.execute("BEGIN TRANSACTION");
+  try {
+    const result = await fn();
+    await db.execute("COMMIT");
+    return result;
+  } catch (error) {
+    await db.execute("ROLLBACK");
+    throw error;
+  }
+}
+
 // 52-card deck generator and shuffler
 export function createDeck(): string[] {
   const suits = ["h", "d", "c", "s"];
@@ -283,6 +295,7 @@ export function evaluateAIAction(
 
 // Deal a new hand - game-variant-aware
 export async function dealNewHand(tableId: string, fids: number[]) {
+  return withTransaction(async () => {
   const deck = createDeck();
 
   const { rows: tableRows } = await db.execute({
@@ -452,106 +465,109 @@ export async function dealNewHand(tableId: string, fids: number[]) {
   });
 
   console.log(`[poker:${tableId}] dealNewHand: ${firstStreet} started. dealerSeat=${newDealerSeatIndex} game=${config.variant} pot=${potSize} firstToAct=${currentTurnFid}`);
+  });
 }
 
 // Advance game to next street - game-variant-aware
 export async function advanceGame(tableId: string, currentState: any) {
-  const phase = currentState.phase;
-  const boardStr = currentState.board;
-  const deckStr = currentState.deck;
-  const dealerSeatIndex = Number(currentState.dealer_seat_index || 0);
-  const gameType = String(currentState.game_type || "NLHE") as GameVariant;
-  const config = getGameConfig(gameType);
+  return withTransaction(async () => {
+    const phase = currentState.phase;
+    const boardStr = currentState.board;
+    const deckStr = currentState.deck;
+    const dealerSeatIndex = Number(currentState.dealer_seat_index || 0);
+    const gameType = String(currentState.game_type || "NLHE") as GameVariant;
+    const config = getGameConfig(gameType);
 
-  const deck = deckStr ? deckStr.split(",") : [];
-  const board = boardStr ? boardStr.split(",") : [];
+    const deck = deckStr ? deckStr.split(",") : [];
+    const board = boardStr ? boardStr.split(",") : [];
 
-  console.log(`[poker:${tableId}] advanceGame: ${phase} -> dealing next street (game=${config.variant})`);
+    console.log(`[poker:${tableId}] advanceGame: ${phase} -> dealing next street (game=${config.variant})`);
 
-  await db.execute({
-    sql: "UPDATE players SET current_bet = 0, has_acted = 0 WHERE table_id = ?",
-    args: [tableId]
-  });
+    await db.execute({
+      sql: "UPDATE players SET current_bet = 0, has_acted = 0 WHERE table_id = ?",
+      args: [tableId]
+    });
 
-  const nextStreet = getNextStreet(config, phase);
-  if (!nextStreet) {
-    console.log(`[poker:${tableId}] advanceGame: no next street from ${phase}`);
-    return;
-  }
-
-  const nextPhase = nextStreet.phase;
-
-  if (usesBoard(config)) {
-    // Board-game variant: deal board cards
-    if (phase === "preflop") {
-      const c1 = deck.pop(); const c2 = deck.pop(); const c3 = deck.pop();
-      if (c1 && c2 && c3) board.push(c1, c2, c3);
-    } else if (phase === "flop") {
-      const c = deck.pop(); if (c) board.push(c);
-    } else if (phase === "turn") {
-      const c = deck.pop(); if (c) board.push(c);
+    const nextStreet = getNextStreet(config, phase);
+    if (!nextStreet) {
+      console.log(`[poker:${tableId}] advanceGame: no next street from ${phase}`);
+      return;
     }
-  } else {
-    // Stud variant: deal player cards (up or down)
-    if (nextStreet.playerCards > 0) {
-      const { rows: activePlayers } = await db.execute({
-        sql: "SELECT fid, hand, visible_cards FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
-        args: [tableId]
-      });
 
-      for (const player of activePlayers) {
-        const fid = Number(player.fid);
-        for (let i = 0; i < nextStreet.playerCards; i++) {
-          const c = deck.pop();
-          if (!c) continue;
-          if (nextStreet.faceUp) {
-            await db.execute({
-              sql: "UPDATE players SET visible_cards = CASE WHEN visible_cards = '' THEN ? ELSE visible_cards || ',' || ? END, hand = hand || ',' || ? WHERE fid = ? AND table_id = ?",
-              args: [c, c, c, fid, tableId]
-            });
-          } else {
-            await db.execute({
-              sql: "UPDATE players SET hand = hand || ',' || ? WHERE fid = ? AND table_id = ?",
-              args: [c, fid, tableId]
-            });
+    const nextPhase = nextStreet.phase;
+
+    if (usesBoard(config)) {
+      // Board-game variant: deal board cards
+      if (phase === "preflop") {
+        const c1 = deck.pop(); const c2 = deck.pop(); const c3 = deck.pop();
+        if (c1 && c2 && c3) board.push(c1, c2, c3);
+      } else if (phase === "flop") {
+        const c = deck.pop(); if (c) board.push(c);
+      } else if (phase === "turn") {
+        const c = deck.pop(); if (c) board.push(c);
+      }
+    } else {
+      // Stud variant: deal player cards (up or down)
+      if (nextStreet.playerCards > 0) {
+        const { rows: activePlayers } = await db.execute({
+          sql: "SELECT fid, hand, visible_cards FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
+          args: [tableId]
+        });
+
+        for (const player of activePlayers) {
+          const fid = Number(player.fid);
+          for (let i = 0; i < nextStreet.playerCards; i++) {
+            const c = deck.pop();
+            if (!c) continue;
+            if (nextStreet.faceUp) {
+              await db.execute({
+                sql: "UPDATE players SET visible_cards = CASE WHEN visible_cards = '' THEN ? ELSE visible_cards || ',' || ? END, hand = hand || ',' || ? WHERE fid = ? AND table_id = ?",
+                args: [c, c, c, fid, tableId]
+              });
+            } else {
+              await db.execute({
+                sql: "UPDATE players SET hand = hand || ',' || ? WHERE fid = ? AND table_id = ?",
+                args: [c, fid, tableId]
+              });
+            }
           }
         }
       }
     }
-  }
 
-  console.log(`[poker:${tableId}] dealt to ${nextPhase}, board now has ${board.length} cards`);
+    console.log(`[poker:${tableId}] dealt to ${nextPhase}, board now has ${board.length} cards`);
 
-  let newCurrentTurnFid = nextPhase === "showdown" ? null : currentState.current_turn_fid;
-  if (nextPhase !== "showdown") {
-    const { rows: activePlayers } = await db.execute({
-      sql: "SELECT fid, seat_index, hand, visible_cards, status FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
-      args: [tableId]
-    });
-    if (activePlayers.length > 0) {
-      const playersForActing: PlayerForActing[] = activePlayers.map((p: any) => ({
-        fid: Number(p.fid),
-        seatIndex: Number(p.seat_index),
-        hand: String(p.hand || "").split(",").filter(Boolean),
-        visibleCards: String(p.visible_cards || "").split(",").filter(Boolean),
-        status: String(p.status || "playing"),
-      }));
-      const firstFid = getFirstToAct(config, nextPhase, playersForActing, dealerSeatIndex);
-      if (firstFid) {
-        newCurrentTurnFid = firstFid;
+    let newCurrentTurnFid = nextPhase === "showdown" ? null : currentState.current_turn_fid;
+    if (nextPhase !== "showdown") {
+      const { rows: activePlayers } = await db.execute({
+        sql: "SELECT fid, seat_index, hand, visible_cards, status FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
+        args: [tableId]
+      });
+      if (activePlayers.length > 0) {
+        const playersForActing: PlayerForActing[] = activePlayers.map((p: any) => ({
+          fid: Number(p.fid),
+          seatIndex: Number(p.seat_index),
+          hand: String(p.hand || "").split(",").filter(Boolean),
+          visibleCards: String(p.visible_cards || "").split(",").filter(Boolean),
+          status: String(p.status || "playing"),
+        }));
+        const firstFid = getFirstToAct(config, nextPhase, playersForActing, dealerSeatIndex);
+        if (firstFid) {
+          newCurrentTurnFid = firstFid;
+        }
       }
     }
-  }
 
-  await db.execute({
-    sql: "UPDATE tables SET board = ?, deck = ?, phase = ?, current_bet = 0, current_turn_fid = ?, last_aggressor_fid = NULL, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
-    args: [board.join(","), deck.join(","), nextPhase, newCurrentTurnFid, tableId]
+    await db.execute({
+      sql: "UPDATE tables SET board = ?, deck = ?, phase = ?, current_bet = 0, current_turn_fid = ?, last_aggressor_fid = NULL, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+      args: [board.join(","), deck.join(","), nextPhase, newCurrentTurnFid, tableId]
+    });
+
+    if (nextPhase === "showdown") {
+      console.log(`[poker:${tableId}] showdown reached, resolving pot`);
+      await resolveShowdown(tableId, Number(currentState.pot_size || 0), board.join(","), gameType);
+    }
   });
-
-  if (nextPhase === "showdown") {
-    console.log(`[poker:${tableId}] showdown reached, resolving pot`);
-    await resolveShowdown(tableId, Number(currentState.pot_size || 0), board.join(","), gameType);
-  }
 }
 
 function getNormalizedLobbyStatus(tableState: any, playerCount: number) {
