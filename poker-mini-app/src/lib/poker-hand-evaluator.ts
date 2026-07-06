@@ -97,13 +97,37 @@ export function bestHandRank(holeCards: Card[], board: Card[]): HandRank {
   return best as HandRank;
 }
 
+/** For PLO (Pot-Limit Omaha): must use exactly 2 hole cards + 3 board cards. */
+export function getBestPloHand(holeCards: Card[], board: Card[]): HandRank {
+  const holeCombos = combinations(holeCards, 2);
+  const boardCombos = combinations(board, 3);
+
+  let best: HandRank | null = null;
+  for (const h of holeCombos) {
+    for (const b of boardCombos) {
+      const rank = bestHandRank(h, b);
+      if (!best || compareHandRanks(rank, best) > 0) {
+        best = rank;
+      }
+    }
+  }
+  return best as HandRank;
+}
+
 /** Ranks each player's best hand and returns the indices of the winner(s)
- * (a tie/split pot returns more than one index). */
+ * (a tie/split pot returns more than one index).
+ * For PLO, enforces exactly 2 hole cards + 3 board cards. */
 export function rankShowdownWinners(
   players: { holeCards: Card[] }[],
   board: Card[],
+  variant: "NLHE" | "PLO" | "O8B" | "STUD" | "STUD8" = "NLHE"
 ): number[] {
-  const ranks = players.map((player) => bestHandRank(player.holeCards, board));
+  const ranks = players.map((player) => {
+    if (variant === "PLO") {
+      return getBestPloHand(player.holeCards, board);
+    }
+    return bestHandRank(player.holeCards, board);
+  });
   let bestRank = ranks[0];
   for (const rank of ranks) {
     if (compareHandRanks(rank, bestRank) > 0) bestRank = rank;

@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { db, initDb } from "~/lib/db";
 import { analyzeHoldemSpot } from "~/lib/game-theory";
@@ -7,7 +8,6 @@ import {
   getGameConfig,
   isValidVariant,
   getFirstToAct,
-  calculateForcedBets,
   calculateBringIn,
   getNextStreet,
   usesBlinds,
@@ -66,6 +66,7 @@ function parseActionHistory(raw: unknown) {
 }
 
 export function isStreetOver(activePlayers: any[], tableBet: number) {
+  if (!activePlayers || activePlayers.length === 0) return false;
   const targetBet = Number(tableBet || 0);
   return activePlayers.every((player) => {
     const playerBet = Number(player.current_bet || 0);
@@ -338,9 +339,14 @@ export async function dealNewHand(tableId: string, fids: number[]) {
 
   if (usesBlinds(config)) {
     // Rotate dealer button one seat forward.
-    newDealerSeatIndex = (currentDealerSeatIndex + 1) % seatedPlayers.length;
+    // FIX: use array position for rotation, but store actual seat index
+    const currentDealerPos = seatedPlayers.findIndex(
+      (p) => Number(p.seat_index) === currentDealerSeatIndex
+    );
+    const newDealerPos = (currentDealerPos + 1) % seatedPlayers.length;
+    newDealerSeatIndex = Number(seatedPlayers[newDealerPos].seat_index);
     const getRelative = (offset: number) =>
-      seatedPlayers[(newDealerSeatIndex + offset) % seatedPlayers.length];
+      seatedPlayers[(newDealerPos + offset) % seatedPlayers.length];
 
     const sbPlayer = getRelative(1);
     const bbPlayer = getRelative(2);
@@ -512,7 +518,7 @@ export async function advanceGame(tableId: string, currentState: any) {
 
   console.log(`[poker:${tableId}] dealt to ${nextPhase}, board now has ${board.length} cards`);
 
-  let newCurrentTurnFid = currentState.current_turn_fid;
+  let newCurrentTurnFid = nextPhase === "showdown" ? null : currentState.current_turn_fid;
   if (nextPhase !== "showdown") {
     const { rows: activePlayers } = await db.execute({
       sql: "SELECT fid, seat_index, hand, visible_cards, status FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
@@ -534,7 +540,7 @@ export async function advanceGame(tableId: string, currentState: any) {
   }
 
   await db.execute({
-    sql: "UPDATE tables SET board = ?, deck = ?, phase = ?, current_bet = 0, current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+    sql: "UPDATE tables SET board = ?, deck = ?, phase = ?, current_bet = 0, current_turn_fid = ?, last_aggressor_fid = NULL, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
     args: [board.join(","), deck.join(","), nextPhase, newCurrentTurnFid, tableId]
   });
 
@@ -1023,7 +1029,7 @@ export async function GET(request: Request) {
   const currentFidStr = searchParams.get("fid");
   const currentFid = Number(currentFidStr);
   const hasCurrentFid = currentFidStr !== null && Number.isSafeInteger(currentFid);
-  const requestId = crypto.randomUUID().slice(0, 8);
+  const requestId = randomUUID().slice(0, 8);
   const startTime = Date.now();
   const finishJson = (body: unknown, init?: ResponseInit) => {
     const elapsed = Date.now() - startTime;
@@ -1282,8 +1288,8 @@ export async function POST(request: Request) {
       }
       const normalizedStakes =
         typeof stakes === "string" && stakes.trim() ? stakes.trim() : "$0.50 / $1";
-      const maxPlayers = Math.min(9, Math.max(2, Number(requestedMaxPlayers || 6)));
-      const buyIn = Math.max(1, Math.round(Number(requestedBuyIn || 50)));
+      const maxPlayers = Math.min(9, Math.max(2, Number(requestedMaxPlayers) || 6));
+      const buyIn = Math.max(1, Math.round(Number(requestedBuyIn) || 50));
       const requestedVisibility = requestedVisibilityRaw === "club" ? "club" : "public";
       const requestedClubId =
         typeof requestedClubIdRaw === "string" && requestedClubIdRaw.trim()
@@ -1615,8 +1621,7 @@ export async function POST(request: Request) {
       const canDeal =
         currentPhase === "showdown" ||
         currentPhase === "preflop" ||
-        currentStatus === "waiting" ||
-        currentStatus === "seated";
+        currentStatus === "waiting";
 
       if (canDeal) {
         const { rows: players } = await db.execute({
@@ -1694,8 +1699,16 @@ export async function POST(request: Request) {
         } else if (action === "call") {
           betDiff = Math.min(newPlayerStack, Math.max(0, newTableBet - newPlayerBet));
         } else if (action === "bet" || action === "raise") {
+          // Validate: raise must be at least the current table bet + minimum raise
+          const minRaise = newTableBet + (newTableBet > 0 ? Math.max(1, newTableBet - Number(currentGameState.current_bet || 0)) : 1);
+          if (actionAmount < minRaise) {
+            return NextResponse.json(
+              { success: false, error: `Raise must be at least ${minRaise}` },
+              { status: 400 },
+            );
+          }
           betDiff = Math.min(newPlayerStack, Math.max(0, actionAmount - newPlayerBet));
-          newTableBet = newPlayerBet + betDiff;
+          newTableBet = Math.max(newTableBet, newPlayerBet + betDiff);
         } else if (action === "all_in") {
           betDiff = newPlayerStack;
           newTableBet = Math.max(newTableBet, newPlayerBet + betDiff);

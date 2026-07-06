@@ -192,7 +192,7 @@ export function findLowestVisibleCard(players: PlayerForActing[]): PlayerForActi
 
   for (const p of players) {
     if (p.visibleCards.length === 0) continue;
-    const card = p.visibleCards[p.visibleCards.length - 1];
+    const card = p.visibleCards[0]; // First visible card (3rd-street up card) determines bring-in
     const r = cardRankStud(card);
     const s = cardSuitOrder(card);
     if (r < lowestRank || (r === lowestRank && s < lowestSuit)) {
@@ -239,16 +239,21 @@ export function getFirstToAct(
           const dealerPlayer = active.find((p) => p.seatIndex === dealerSeatIndex);
           return dealerPlayer ? dealerPlayer.fid : active[0].fid;
         }
-        const startIdx = active.findIndex((p) => p.seatIndex > dealerSeatIndex);
-        const bbIdx = (startIdx + 1) % active.length;
-        return active[(bbIdx + 1) % active.length].fid;
+        // 3+ players: UTG is 3 seats after dealer (SB=+1, BB=+2, UTG=+3)
+        const dealerPos = active.findIndex((p) => p.seatIndex === dealerSeatIndex);
+        const startPos = dealerPos === -1 ? 0 : dealerPos;
+        const utgPos = (startPos + 3) % active.length;
+        return active[utgPos].fid;
       }
-      const startIdx = active.findIndex((p) => p.seatIndex > dealerSeatIndex);
-      return active[startIdx === -1 ? 0 : startIdx].fid;
+      // Postflop: first to act is player after dealer (SB position)
+      const dealerPos = active.findIndex((p) => p.seatIndex === dealerSeatIndex);
+      const startPos = dealerPos === -1 ? 0 : dealerPos;
+      const firstPos = (startPos + 1) % active.length;
+      return active[firstPos].fid;
     }
     case "STUD":
     case "STUD8": {
-      if (phase === "3rd" || phase === "4th") {
+      if (phase === "3rd") {
         return findLowestVisibleCard(active)?.fid ?? active[0].fid;
       }
       return findHighestHandShowing(active)?.fid ?? active[0].fid;

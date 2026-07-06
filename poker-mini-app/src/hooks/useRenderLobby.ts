@@ -623,13 +623,17 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       visibility?: "public" | "club";
       clubId?: string | null;
     }, user?: UniversalUser) => {
+      // Always notify via WS if Render is configured, but HTTP is authoritative
       if (env.hasRenderLobby) {
         send({ type: "create_table", payload });
-        return;
       }
 
+      const actionUrl = env.hasRenderLobby
+        ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
+        : getApiUrl("/api/table");
+
       try {
-        const response = await fetch(getApiUrl("/api/table"), {
+        const response = await fetch(actionUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

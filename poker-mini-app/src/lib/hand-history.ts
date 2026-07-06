@@ -180,6 +180,7 @@ export async function resolveShowdown(
       const winnerIndices = rankShowdownWinners(
         eligiblePlayers.map((p) => ({ holeCards: p.holeCards.split(",").filter(Boolean) as Card[] })),
         boardCards as Card[],
+        variant,
       );
 
       if (winnerIndices.length === 0) continue;
