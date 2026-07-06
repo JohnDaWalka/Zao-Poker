@@ -95,18 +95,23 @@ async function initializeDb() {
         PRIMARY KEY (fid, table_id)
       )
     `);
-    await db.execute(`
-      INSERT OR IGNORE INTO players_new (
-        fid, username, pfp_url, table_id, seat_index, stack_size, hand,
-        current_bet, status, is_bot, is_ready, has_acted, total_invested,
-        joined_at, last_seen
-      )
-      SELECT
-        fid, username, pfp_url, table_id, seat_index, stack_size, hand,
-        current_bet, status, is_bot, is_ready, has_acted, total_invested,
-        joined_at, last_seen
-      FROM players
-    `);
+    // Only migrate if old players table exists (first-run has no players table yet)
+    try {
+      await db.execute(`
+        INSERT OR IGNORE INTO players_new (
+          fid, username, pfp_url, table_id, seat_index, stack_size, hand,
+          current_bet, status, is_bot, is_ready, has_acted, total_invested,
+          joined_at, last_seen
+        )
+        SELECT
+          fid, username, pfp_url, table_id, seat_index, stack_size, hand,
+          current_bet, status, is_bot, is_ready, has_acted, total_invested,
+          joined_at, last_seen
+        FROM players
+      `);
+    } catch {
+      // Old players table doesn't exist yet (first run) — nothing to migrate
+    }
     await db.execute(`DROP TABLE IF EXISTS players`);
     await db.execute(`ALTER TABLE players_new RENAME TO players`);
   }
