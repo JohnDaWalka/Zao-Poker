@@ -1499,7 +1499,7 @@ function ActionTableView({
   onJoin: () => void;
   onLeave: () => void;
   onReady: () => void;
-  onGameAction: (action: string, amount?: number) => void;
+  onGameAction: (action: "fold" | "check" | "call" | "bet" | "raise" | "all_in", amount?: number) => void;
   onDealNextHand: () => void;
 }) {
   const hand = getHandState(table, user);
@@ -1523,7 +1523,7 @@ function ActionTableView({
 
   const visiblePlayers = table.seats.filter((seat) => seat.user);
 
-  function submitAction(action: string) {
+  function submitAction(action: "fold" | "check" | "call" | "bet" | "raise" | "all_in") {
     if (!canAct) return;
 
     const amount =
@@ -1743,7 +1743,7 @@ function ActionControls({
   minRaise: number;
   betAmount: number;
   setBetAmount: (value: number) => void;
-  onAction: (action: string) => void;
+  onAction: (action: "fold" | "check" | "call" | "bet" | "raise" | "all_in") => void;
   potSize: number;
   heroStack: number;
 }) {
