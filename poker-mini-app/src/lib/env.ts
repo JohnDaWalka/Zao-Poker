@@ -94,3 +94,4 @@ export function getServerEnv() {
 }
 // deploy-trigger
 // deploy: VERCEL_TOKEN should be live
+// deploy: testing VERCEL_TOKEN
