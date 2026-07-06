@@ -82,20 +82,29 @@ async function killProcessOnPort(port) {
 }
 
 async function startDev() {
-  // Check if the specified port is already in use
-  const isPortInUse = await checkPort(port);
-  if (isPortInUse) {
-    console.error(`Port ${port} is already in use. To find and kill the process using this port:\n\n` +
-      (process.platform === 'win32'
-        ? `1. Run: netstat -ano | findstr :${port}\n` +
-          '2. Note the PID (Process ID) from the output\n' +
-          '3. Run: taskkill /PID <PID> /F\n'
-        : `On macOS/Linux, run:\nnpm run cleanup\n`) +
-      '\nThen try running this command again.');
+  // Port cascade: try the requested port, then up to 10 successive ports
+  const startPort = port;
+  const maxAttempts = 10;
+  let selectedPort = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const candidate = startPort + attempt;
+    const isPortInUse = await checkPort(candidate);
+    if (!isPortInUse) {
+      selectedPort = candidate;
+      break;
+    }
+    console.log(`Port ${candidate} is in use, trying next...`);
+  }
+
+  if (selectedPort === null) {
+    console.error(`Could not find an available port between ${startPort} and ${startPort + maxAttempts - 1}.`);
     process.exit(1);
   }
 
+  port = selectedPort;
   const miniAppUrl = `http://localhost:${port}`;
+  console.log(`Using port ${port}`);
 
   console.log(`
 💻 Your mini app is running at: ${miniAppUrl}

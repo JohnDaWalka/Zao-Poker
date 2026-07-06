@@ -12,10 +12,10 @@
     "noEmit": false,
     "paths": {
       "@zao-poker/core": [
-        "../packages/poker-core/src"
+        "../packages/poker-core/dist"
       ],
       "@zao-poker/core/*": [
-        "../packages/poker-core/src/*"
+        "../packages/poker-core/dist/*"
       ]
     }
   },

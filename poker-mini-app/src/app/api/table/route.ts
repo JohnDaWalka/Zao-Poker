@@ -838,10 +838,6 @@ async function playAutomatedTurn(tableId: string) {
         args: [aiBetDiff, aiTargetBet, aiFid, aiLastRaiseAmount, tableId],
       });
       await db.execute({
-        sql: "UPDATE tables SET pot_size = pot_size + ?, current_bet = ?, last_aggressor_fid = ? WHERE id = ?",
-        args: [aiBetDiff, aiTargetBet, aiFid, tableId],
-      });
-      await db.execute({
         sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = ? AND table_id = ?",
         args: [aiBetDiff, aiTargetBet, aiBetDiff, aiFid, tableId],
       });
@@ -866,6 +862,37 @@ async function playAutomatedTurn(tableId: string) {
         sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
         args: [aiNextFid, tableId],
       });
+    } else {
+      // AI decided to raise but couldn't actually increase the bet (e.g., already matched or short-stacked).
+      // Treat as a call/check and advance turn normally.
+      const callAmount = Math.min(Number(aiPlayer.stack_size || 0), Math.max(0, aiToCall));
+      const aiNewBet = aiCurrentBet + callAmount;
+      await db.execute({
+        sql: "UPDATE tables SET pot_size = pot_size + ? WHERE id = ?",
+        args: [callAmount, tableId],
+      });
+      await db.execute({
+        sql: "UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ? WHERE fid = ? AND table_id = ?",
+        args: [callAmount, aiNewBet, callAmount, aiFid, tableId],
+      });
+      await appendActionHistory(tableId, "ai", callAmount > 0 ? "call" : "check", callAmount > 0 ? callAmount : undefined);
+
+      const { rows: activeAfterCall } = await db.execute({
+        sql: "SELECT fid, current_bet, has_acted, stack_size FROM players WHERE table_id = ? AND status = 'playing' ORDER BY seat_index ASC",
+        args: [tableId],
+      });
+      if (isStreetOver(activeAfterCall, newTableBet)) {
+        const { rows: freshState } = await db.execute({ sql: "SELECT * FROM tables WHERE id = ?", args: [tableId] });
+        await advanceGame(tableId, freshState[0]);
+      } else {
+        const aiCurrentIndex = activeAfterCall.findIndex((player: any) => Number(player.fid) === aiFid);
+        const aiNextIndex = (aiCurrentIndex + 1) % activeAfterCall.length;
+        const aiNextFid = activeAfterCall[aiNextIndex].fid;
+        await db.execute({
+          sql: "UPDATE tables SET current_turn_fid = ?, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+          args: [aiNextFid, tableId],
+        });
+      }
     }
 
     return true;
@@ -1752,7 +1779,6 @@ export async function POST(request: Request) {
         let newPlayerBet = Number(currentPlayer.current_bet || 0);
         let newPlayerStack = Number(currentPlayer.stack_size || 0);
         let betDiff = 0;
-        const isAggressive = action === "bet" || action === "raise" || action === "all_in";
 
         if (action === "check") {
           if (newTableBet > newPlayerBet) {
@@ -1766,8 +1792,12 @@ export async function POST(request: Request) {
         } else if (action === "bet" || action === "raise") {
           const currentBet = Number(currentGameState.current_bet || 0);
           const lastRaiseAmount = Number(currentGameState.last_raise_amount || 0);
-          const bb = Number(currentGameState.big_blind || 1);
-          // Minimum raise: if no bet, min is bb; otherwise currentBet + lastRaiseAmount
+          // Use current blinds from the table state to compute minimum raise correctly
+          const { blinds } = getCurrentBlinds(
+            currentGameState.start_time ? String(currentGameState.start_time) : null,
+          );
+          const bb = blinds.bb;
+          // Minimum raise: if no bet, min is bb; otherwise currentBet + max(bb, lastRaiseAmount)
           const minRaise = currentBet > 0 ? currentBet + Math.max(bb, lastRaiseAmount) : bb;
           if (actionAmount < minRaise) {
             return NextResponse.json(
@@ -1778,9 +1808,20 @@ export async function POST(request: Request) {
           betDiff = Math.min(newPlayerStack, Math.max(0, actionAmount - newPlayerBet));
           newTableBet = Math.max(newTableBet, newPlayerBet + betDiff);
         } else if (action === "all_in") {
+          if (newPlayerStack <= 0) {
+            return NextResponse.json(
+              { success: false, error: "You have no chips to bet" },
+              { status: 400 },
+            );
+          }
           betDiff = newPlayerStack;
           newTableBet = Math.max(newTableBet, newPlayerBet + betDiff);
         }
+
+        // Track whether the bet size actually increased. Short all-ins (less than current bet)
+        // are treated as calls, not aggressive actions.
+        const increasedBet = newTableBet > Number(currentGameState.current_bet || 0);
+        const isAggressive = (action === "bet" || action === "raise" || action === "all_in") && increasedBet;
 
         if (betDiff > 0) {
           newPlayerBet += betDiff;
@@ -1792,8 +1833,7 @@ export async function POST(request: Request) {
             args: [newPlayerStack, newPlayerBet, betDiff, fid, effectiveTableId]
           });
 
-          // Track the last aggressor whenever the bet size actually increases.
-          const increasedBet = newTableBet > Number(currentGameState.current_bet || 0);
+          // Track the last aggressor whenever the bet size actually increased.
           const lastRaiseAmount = increasedBet ? newTableBet - Number(currentGameState.current_bet || 0) : 0;
           await db.execute({
             sql: increasedBet
@@ -1803,7 +1843,6 @@ export async function POST(request: Request) {
               ? [newPotSize, newTableBet, fid, lastRaiseAmount, effectiveTableId]
               : [newPotSize, newTableBet, effectiveTableId],
           });
-
         }
 
         // Mark this player as having acted.

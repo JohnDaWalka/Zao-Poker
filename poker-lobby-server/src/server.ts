@@ -1,5 +1,5 @@
 import express from 'express';
-import { WebSocketServer, WebSocket } from 'ws';
+import WebSocket from 'ws';
 import { createClient } from '@libsql/client';
 import dotenv from 'dotenv';
 import { 
@@ -89,8 +89,8 @@ async function loadLobbyFromDb(): Promise<LobbyState> {
         clubId: t.club_id ? String(t.club_id) : null,
         clubName: t.club_name ? String(t.club_name) : null,
         status: (t.status === 'playing' ? 'in_game' : (t.status || 'waiting')) as any,
-        createdAt: t.created_at ? new Date(t.created_at).getTime() : Date.now(),
-        startTime: t.start_time,
+        createdAt: t.created_at ? new Date(String(t.created_at)).getTime() : Date.now(),
+        startTime: t.start_time ? String(t.start_time) : null,
         board: String(t.board || '').split(',').filter(Boolean),
         potSize: Number(t.pot_size || 0),
         currentBet: Number(t.current_bet || 0),
@@ -187,7 +187,7 @@ const server = app.listen(PORT, () => {
 });
 
 // WebSocket
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocket.Server({ server, path: '/ws' });
 
 wss.on('connection', async (ws) => {
   console.log('WS client connected');
@@ -267,7 +267,7 @@ async function playAutomatedTurn(tableId: string) {
   const aiToCall = newTableBet - aiCurrentBet;
   const aiFid = Number(aiPlayer.fid);
 
-  const decision = getBasicAiDecision(aiToCall, newPotSize, Number(aiPlayer.stack_size || 0), currentGameState.phase);
+  const decision = getBasicAiDecision(aiToCall, newPotSize, Number(aiPlayer.stack_size || 0), String(currentGameState.phase || 'preflop'));
 
   await db.execute({ sql: "UPDATE players SET has_acted = 1 WHERE fid = ? AND table_id = ?", args: [aiFid, tableId] });
 
