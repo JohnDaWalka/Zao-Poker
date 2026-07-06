@@ -287,17 +287,17 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         return incoming;
       });
 
-      // Post-merge: force-preserve the current user's hole cards (critical for heads-up lobby entry)
+      // Defense-in-depth: strip hole cards for all players except the current user.
+      // This prevents backend leaks from ever reaching the UI.
       const finalTables = merged.map((tbl) => {
         if (currentFid == null) return tbl;
-        const userSeatIdx = tbl.seats.findIndex((s) => s.user?.fid === currentFid);
-        if (userSeatIdx < 0) return tbl;
-        const userSeat = tbl.seats[userSeatIdx];
-        if (userSeat.holeCards.length > 0) return tbl;
-
-        // If we have a previous table state with cards for this user, keep them (simple last known)
-        // For stronger, we could keep a ref, but the UI sticky + this + the existing prefer logic should suffice.
-        return tbl;
+        return {
+          ...tbl,
+          seats: tbl.seats.map((seat) => {
+            if (seat.user?.fid === currentFid) return seat;
+            return { ...seat, holeCards: [] };
+          }),
+        };
       });
 
       return {
@@ -486,7 +486,15 @@ export function useRenderLobby(currentUser?: UniversalUser) {
                 const finalPrefer = isNewHandStart ? false : ( (!incomingHasBoard && existingHasBoard) || preferExisting );
                 return finalPrefer ? existing : incoming;
               });
-              return { tables: merged, updatedAt: Date.now() };
+              const strippedTables = currentFid != null
+                ? merged.map((tbl) => ({
+                    ...tbl,
+                    seats: tbl.seats.map((seat) =>
+                      seat.user?.fid === currentFid ? seat : { ...seat, holeCards: [] }
+                    ),
+                  }))
+                : merged;
+              return { tables: strippedTables, updatedAt: Date.now() };
             });
             setError(null);
           } else if (message.type === "error") {

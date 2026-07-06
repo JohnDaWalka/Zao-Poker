@@ -404,8 +404,9 @@ export async function dealNewHand(tableId: string, fids: number[]) {
     for (const player of seatedPlayers) {
       const fid = Number(player.fid);
       if (deck.length < 3) {
-        // Not enough cards left in deck for all players
-        break;
+        // Not enough cards left in deck for this player, skip and continue with others
+        console.log(`[poker:${tableId}] dealNewHand: deck exhausted, skipping player ${fid}`);
+        continue;
       }
       const c1 = deck.pop(); // down
       const c2 = deck.pop(); // down
@@ -418,6 +419,7 @@ export async function dealNewHand(tableId: string, fids: number[]) {
         args: [hand, visible, fid, tableId]
       });
     }
+
 
     // Calculate bring-in from visible cards.
     const { rows: playerCards } = await db.execute({
@@ -516,6 +518,10 @@ export async function advanceGame(tableId: string, currentState: any) {
 
         for (const player of activePlayers) {
           const fid = Number(player.fid);
+          if (deck.length < nextStreet.playerCards) {
+            console.log(`[poker:${tableId}] advanceGame: deck exhausted, skipping deal for player ${fid}`);
+            continue;
+          }
           for (let i = 0; i < nextStreet.playerCards; i++) {
             const c = deck.pop();
             if (!c) continue;
@@ -826,6 +832,11 @@ async function playAutomatedTurn(tableId: string) {
     const aiBetDiff = Math.max(0, aiTargetBet - aiCurrentBet);
 
     if (aiBetDiff > 0) {
+      const aiLastRaiseAmount = aiTargetBet - newTableBet;
+      await db.execute({
+        sql: "UPDATE tables SET pot_size = pot_size + ?, current_bet = ?, last_aggressor_fid = ?, last_raise_amount = ? WHERE id = ?",
+        args: [aiBetDiff, aiTargetBet, aiFid, aiLastRaiseAmount, tableId],
+      });
       await db.execute({
         sql: "UPDATE tables SET pot_size = pot_size + ?, current_bet = ?, last_aggressor_fid = ? WHERE id = ?",
         args: [aiBetDiff, aiTargetBet, aiFid, tableId],
@@ -966,7 +977,7 @@ async function runAutoplayUntilHuman(tableId: string, maxTurns = AUTOPLAY_MAX_TU
   }
 }
 
-async function getTableSnapshot(tableId: string) {
+async function getTableSnapshot(tableId: string, currentFid?: number) {
   const { rows } = await db.execute({
     sql: "SELECT * FROM tables WHERE id = ?",
     args: [tableId],
@@ -978,13 +989,30 @@ async function getTableSnapshot(tableId: string) {
   }
 
   const { rows: players } = await db.execute({
-    sql: "SELECT fid, username, pfp_url, stack_size, hand, current_bet, status, seat_index, is_ready, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+    sql: "SELECT fid, username, pfp_url, stack_size, hand, visible_cards, current_bet, status, seat_index, is_ready, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
     args: [tableId],
+  });
+
+  const gameType = String(tableState.game_type || "NLHE") as GameVariant;
+  const config = getGameConfig(gameType);
+  const isStud = !usesBoard(config);
+
+  const maskedPlayers = players.map((player: any) => {
+    const playerFid = Number(player.fid);
+    if (currentFid !== undefined && playerFid === currentFid) {
+      return player;
+    }
+    // For stud variants, others can see visible_cards but not hidden hand
+    if (isStud) {
+      return { ...player, hand: "" };
+    }
+    // For board games, hide hole cards from others
+    return { ...player, hand: "" };
   });
 
   return {
     tableState,
-    players,
+    players: maskedPlayers,
   };
 }
 
@@ -1017,8 +1045,8 @@ async function maybeAutoDealPracticeHand(tableId: string) {
   return true;
 }
 
-async function buildTableResponse(tableId: string) {
-  const snapshot = await getTableSnapshot(tableId);
+async function buildTableResponse(tableId: string, currentFid?: number) {
+  const snapshot = await getTableSnapshot(tableId, currentFid);
   if (!snapshot) {
     return null;
   }
@@ -1031,10 +1059,12 @@ async function buildTableResponse(tableId: string) {
     (player: any) => !isBotPlayer(player) && Number(player.is_ready || 0) === 1,
   ).length;
 
+  const { deck, action_history, ...safeTableState } = tableState;
+
   return {
     success: true,
     gameState: {
-      ...tableState,
+      ...safeTableState,
       ...getTableMetadata(tableState),
       current_blinds: blinds,
       next_level_in_secs: nextLevelInSecs,
@@ -1189,7 +1219,7 @@ export async function GET(request: Request) {
       // ("Start Next Hand") to avoid stealing the result of the previous hand.
       // await maybeAutoDealPracticeHand(tableId);
 
-      const response = await buildTableResponse(tableId);
+      const response = await buildTableResponse(tableId, hasCurrentFid ? currentFid : undefined);
       if (!response) {
         return finishJson(
           { success: false, error: "Table not found" },
@@ -1764,14 +1794,16 @@ export async function POST(request: Request) {
 
           // Track the last aggressor whenever the bet size actually increases.
           const increasedBet = newTableBet > Number(currentGameState.current_bet || 0);
+          const lastRaiseAmount = increasedBet ? newTableBet - Number(currentGameState.current_bet || 0) : 0;
           await db.execute({
             sql: increasedBet
-              ? "UPDATE tables SET pot_size = ?, current_bet = ?, last_aggressor_fid = ? WHERE id = ?"
+              ? "UPDATE tables SET pot_size = ?, current_bet = ?, last_aggressor_fid = ?, last_raise_amount = ? WHERE id = ?"
               : "UPDATE tables SET pot_size = ?, current_bet = ? WHERE id = ?",
             args: increasedBet
-              ? [newPotSize, newTableBet, fid, effectiveTableId]
+              ? [newPotSize, newTableBet, fid, lastRaiseAmount, effectiveTableId]
               : [newPotSize, newTableBet, effectiveTableId],
           });
+
         }
 
         // Mark this player as having acted.
@@ -1820,7 +1852,7 @@ export async function POST(request: Request) {
     // and GETs can still trigger auto for practice flow if desired.
     // await maybeAutoDealPracticeHand(effectiveTableId);
 
-    const response = await buildTableResponse(effectiveTableId);
+    const response = await buildTableResponse(effectiveTableId, fid);
     if (!response) {
       return NextResponse.json(
         { success: false, error: "Table not found" },
