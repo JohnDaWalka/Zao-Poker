@@ -1,4 +1,5 @@
-// Deploy trigger: VERCEL_TOKEN configured — workflow should auto-deploy on next push
+// Centralized env validation for the Zao Poker mini app.
+// Warns (never throws) so a missing var degrades a feature, not the whole app.
 
 // and a missing var (e.g. a newly-added one not yet set in Vercel) must
 // degrade a feature, not crash the whole mini app.
