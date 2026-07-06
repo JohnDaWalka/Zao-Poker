@@ -383,6 +383,25 @@ async function initializeDb() {
   await db.execute(
     "UPDATE players SET is_bot = COALESCE(is_bot, 0), is_ready = COALESCE(is_ready, 0), total_invested = COALESCE(total_invested, 0), last_seen = COALESCE(last_seen, CURRENT_TIMESTAMP)",
   );
+
+  // Dossier entries for AI coaching history (port of Python dossier_manager)
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS dossier_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fid INTEGER NOT NULL,
+      hand_id TEXT NOT NULL,
+      analysis TEXT DEFAULT '',
+      tags TEXT DEFAULT '',
+      confidence REAL DEFAULT 0,
+      variant TEXT DEFAULT '',
+      pot_size INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(fid, hand_id)
+    )
+  `);
+  await db.execute(
+    "CREATE INDEX IF NOT EXISTS idx_dossier_entries_fid_created ON dossier_entries(fid, created_at)",
+  );
 }
 
 export async function initDb() {
