@@ -23,6 +23,7 @@ export type UniversalUser = {
   chainNamespace?: ChainNamespace;
   runtimeHost: RuntimeHost;
   authSource: AuthSource;
+  neynarScore?: number;
 };
 
 export type UniversalWallet = {

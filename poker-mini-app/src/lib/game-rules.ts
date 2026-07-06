@@ -247,8 +247,11 @@ export function getFirstToAct(
       }
       // Postflop: first to act is player after dealer (SB position)
       const dealerPos = active.findIndex((p) => p.seatIndex === dealerSeatIndex);
-      const startPos = dealerPos === -1 ? 0 : dealerPos;
-      const firstPos = (startPos + 1) % active.length;
+      if (dealerPos === -1) {
+        // Dealer is not active; the first active player (lowest seat index) acts first
+        return active[0].fid;
+      }
+      const firstPos = (dealerPos + 1) % active.length;
       return active[firstPos].fid;
     }
     case "STUD":
@@ -304,7 +307,7 @@ export function calculateForcedBets(
     lastAggressorFid = bbFid;
   } else if (usesAnteBringIn(config)) {
     const bb = blinds.bb;
-    const ante = config.anteMul ? Math.floor(bb * config.anteMul) : 0;
+    const ante = config.anteMul ? Math.max(1, Math.floor(bb * config.anteMul)) : 0;
     for (const p of players) {
       posts.set(p.fid, (posts.get(p.fid) || 0) + Math.min(p.stack, ante));
     }
@@ -329,7 +332,7 @@ export function calculateBringIn(
     }))
   );
   const smallBet = bb * (config.smallBetMul ?? 1);
-  const amount = config.bringInMul ? Math.floor(smallBet * config.bringInMul) : 0;
+  const amount = config.bringInMul ? Math.max(1, Math.floor(smallBet * config.bringInMul)) : 0;
   return { bringInFid: lowest?.fid ?? null, amount };
 }
 

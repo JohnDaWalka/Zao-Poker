@@ -111,12 +111,12 @@ async function startDev() {
 
 🌐 To test with the Farcaster preview tool:
 
-   1. Create a free ngrok account at https://ngrok.com/download/mac-os
-   2. Download and install ngrok following the instructions
-   3. In a NEW terminal window, run: ngrok http ${port}
-   4. Copy the forwarding URL (e.g., https://xxxx-xx-xx-xx-xx.ngrok-free.app)
-   5. Navigate to: https://farcaster.xyz/~/developers/mini-apps/preview
-   6. Enter your ngrok URL and click "Preview" to test your mini app
+   1. In a NEW terminal, run: npm run tunnel
+   2. Copy the public URL (e.g., https://xxxx.trycloudflare.com)
+   3. Navigate to: https://farcaster.xyz/~/developers/mini-apps/preview
+   4. Enter your URL and click "Preview"
+
+   Or use the in-app tester: http://localhost:${port}/tester
 `)
   
   // Start next dev with appropriate configuration

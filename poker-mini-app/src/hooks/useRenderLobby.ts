@@ -43,6 +43,7 @@ export type PokerTable = {
   dealerSeatIndex?: number;
   seats: Seat[];
   currentBlinds?: { sb: number; bb: number; ante: number };
+  minVetScore?: number;
 };
 
 export type LobbyState = {
@@ -76,6 +77,7 @@ type CurrentApiLobbyTable = {
   action_history?: string;
   current_turn_fid?: number | null;
   dealer_seat_index?: number | null;
+  min_vet_score?: number;
 };
 
 type CurrentApiPlayer = {
@@ -89,6 +91,7 @@ type CurrentApiPlayer = {
   seat_index?: number;
   is_ready?: number;
   is_bot?: number;
+  neynar_score?: number;
 };
 
 type CurrentApiTableDetailResponse = {
@@ -128,6 +131,7 @@ function mapPlayerToUniversalUser(player: CurrentApiPlayer): UniversalUser {
     avatarUrl: player.pfp_url || undefined,
     runtimeHost: "unknown_browser",
     authSource: isLikelyFarcaster ? "farcaster" : "guest",
+    neynarScore: player.neynar_score,
   };
 }
 
@@ -207,6 +211,7 @@ function mapCurrentApiTable(
       bb: Number((table as any).current_blinds.bb),
       ante: Number((table as any).current_blinds.ante),
     } : undefined,
+    minVetScore: Number(table.min_vet_score || 0),
   };
 }
 

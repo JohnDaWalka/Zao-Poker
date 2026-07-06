@@ -77,6 +77,7 @@ record("Farcaster manifest", await checkJson("Farcaster manifest", `${appUrl}/.w
 // manifest.webmanifest is served by Next.js App Router — mark optional so a
 // local dev server (which may not build manifest routes) doesn't block CI.
 record("PWA manifest",       await checkJson("PWA manifest",       `${appUrl}/manifest.webmanifest`, { optional: true }));
+record("In-app tester",      await checkJson("In-app tester",      `${appUrl}/tester`, { optional: true }));
 
 // --- Backend checks ---
 record("Render health",  await checkJson("Render health",  `${renderApiUrl}/health`));

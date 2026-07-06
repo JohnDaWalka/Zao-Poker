@@ -138,6 +138,40 @@ function formatChatTime(timestamp: string) {
   }).format(date);
 }
 
+function getReputationTier(score?: number) {
+  if (score === undefined || score === null) return { label: "—", color: "#9ca3af", bg: "#f3f4f6" };
+  if (score >= 0.85) return { label: "Elite", color: "#d97706", bg: "#fef3c7" };
+  if (score >= 0.70) return { label: "High", color: "#059669", bg: "#d1fae5" };
+  if (score >= 0.55) return { label: "Standard", color: "#2563eb", bg: "#dbeafe" };
+  if (score >= 0.35) return { label: "Low", color: "#6b7280", bg: "#e5e7eb" };
+  return { label: "Unrated", color: "#9ca3af", bg: "#f3f4f6" };
+}
+
+function ReputationBadge({ score }: { score?: number }) {
+  const tier = getReputationTier(score);
+  return (
+    <span
+      style={{
+        fontSize: "0.65rem",
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.03em",
+        padding: "1px 6px",
+        borderRadius: "999px",
+        backgroundColor: tier.bg,
+        color: tier.color,
+        display: "inline-block",
+        lineHeight: 1.4,
+        marginLeft: "4px",
+        verticalAlign: "middle",
+      }}
+      title={`Neynar reputation score: ${score?.toFixed(2) ?? "—"}`}
+    >
+      {tier.label}
+    </span>
+  );
+}
+
 function handInsight(hand: HandHistoryEntry) {
   if (hand.result === "win") {
     return hand.resolution === "showdown"
@@ -454,6 +488,46 @@ export default function ZaoPokerUI() {
               <strong>{shortAddress(user.walletAddress) ?? "Not connected"}</strong>
             </div>
 
+            {user.authSource === "farcaster" && user.neynarScore !== undefined ? (
+              <div style={{ marginTop: "8px", textAlign: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+                  <ReputationBadge score={user.neynarScore} />
+                  <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                    {user.neynarScore.toFixed(2)}
+                  </span>
+                </div>
+                <button
+                  onClick={() => window.open("/tester", "_blank")}
+                  style={{
+                    marginTop: "6px",
+                    fontSize: "0.7rem",
+                    color: "#a78bfa",
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                    padding: 0,
+                  }}
+                >
+                  Check My Score →
+                </button>
+              </div>
+            ) : user.authSource === "farcaster" ? (
+              <div style={{ marginTop: "8px", textAlign: "center" }}>
+                <button
+                  onClick={() => window.open("/tester", "_blank")}
+                  className="ls-primary-button"
+                  style={{
+                    fontSize: "0.7rem",
+                    padding: "4px 10px",
+                    borderRadius: "6px",
+                  }}
+                >
+                  Check My Score
+                </button>
+              </div>
+            ) : null}
+
             {user.authSource !== "farcaster" && (
               <div className="ls-connect-wrap">
                 <ConnectWallet />
@@ -529,6 +603,7 @@ export default function ZaoPokerUI() {
                 setActiveTab("table");
               }}
               onJoin={joinTable}
+              viewerNeynarScore={user.neynarScore}
             />
           )}
 
@@ -651,6 +726,7 @@ function LobbyView({
   gameFilter,
   totalTables,
   viewerFid,
+  viewerNeynarScore,
   onSearchChange,
   onStatusFilterChange,
   onGameFilterChange,
@@ -680,6 +756,7 @@ function LobbyView({
   gameFilter: "all" | GameType;
   totalTables: number;
   viewerFid: number;
+  viewerNeynarScore?: number;
   onSearchChange: (value: string) => void;
   onStatusFilterChange: (value: "all" | TableStatus) => void;
   onGameFilterChange: (value: "all" | GameType) => void;
@@ -1160,6 +1237,26 @@ function LobbyView({
           const isSeatedHere = table.id === seatedTableId;
           const isFull = occupied >= table.maxPlayers;
 
+          // Vetting: if table requires a score, check user's score.
+          const minVet = table.minVetScore ?? 0;
+          const hasScore = typeof viewerNeynarScore === "number";
+          const vetted = minVet <= 0 || !hasScore || viewerNeynarScore >= minVet;
+
+          let joinLabel = isSeatedHere
+            ? "Seated"
+            : isFull
+              ? "Full"
+              : table.status === "in_game"
+                ? "In Game"
+                : !vetted
+                  ? "🔒 Locked"
+                  : "Join";
+
+          let joinTitle = "";
+          if (!vetted && minVet > 0) {
+            joinTitle = `Your Neynar score: ${(viewerNeynarScore ?? 0).toFixed(2)}. Needs ≥ ${(minVet * 100).toFixed(0)} to join.`;
+          }
+
           return (
             <article
               key={table.id}
@@ -1185,6 +1282,18 @@ function LobbyView({
                 {table.visibility === "club" && (
                   <span>{table.clubName ?? "Club"} private table</span>
                 )}
+                {table.minVetScore && table.minVetScore > 0 && (
+                  <span
+                    style={{
+                      color: "#d97706",
+                      fontWeight: 600,
+                      fontSize: "0.75rem",
+                    }}
+                    title={`Requires Neynar reputation score ≥ ${(table.minVetScore * 100).toFixed(0)}`}
+                  >
+                    🔒 Vetted
+                  </span>
+                )}
                 <span>{formatStartTime(table.startTime)}</span>
               </div>
 
@@ -1204,20 +1313,15 @@ function LobbyView({
 
                 <button
                   className="ls-primary-button ls-button-press"
-                  disabled={Boolean(seatedTableId) || isFull || table.status === "in_game"}
+                  disabled={Boolean(seatedTableId) || isFull || table.status === "in_game" || !vetted}
+                  title={joinTitle || undefined}
                   onClick={(event) => {
                     event.stopPropagation();
                     onJoin(table);
                   }}
                   type="button"
                 >
-                  {isSeatedHere
-                    ? "Seated"
-                    : isFull
-                      ? "Full"
-                      : table.status === "in_game"
-                        ? "In Game"
-                        : "Join"}
+                  {joinLabel}
                 </button>
               </div>
             </article>
@@ -1539,6 +1643,25 @@ function ActionTableView({
   return (
     <div className="ls-view ls-play-view">
       <div className="ls-play-topbar" style={{ padding: '8px 12px', fontSize: '11px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontWeight: 700, fontSize: '13px' }}>{table.name}</span>
+          <span style={{ color: '#9ca3af' }}>{table.stakes}</span>
+          {table.minVetScore && table.minVetScore > 0 && (
+            <span
+              style={{
+                color: "#d97706",
+                fontWeight: 600,
+                fontSize: "0.7rem",
+                background: "#fef3c7",
+                padding: "1px 6px",
+                borderRadius: "999px",
+              }}
+              title={`Requires Neynar reputation score ≥ ${(table.minVetScore * 100).toFixed(0)}`}
+            >
+              🔒 Vetted
+            </span>
+          )}
+        </div>
         <div className="ls-play-top-actions">
           {!currentSeat && (
             <button
@@ -1898,7 +2021,12 @@ function PlayerSeatMini({
         )}
       </div>
 
-      <strong>{seat.user?.displayName ?? "Open"}</strong>
+      <strong>
+        {seat.user?.displayName ?? "Open"}
+        {seat.user?.neynarScore !== undefined ? (
+          <ReputationBadge score={seat.user.neynarScore} />
+        ) : null}
+      </strong>
 
       <small>
         {isDealer ? "D" : isSmallBlind ? "SB" : isBigBlind ? "BB" : ""}
@@ -1933,6 +2061,7 @@ function PlayerRow({
       <div>
         <strong>
           {seat.user.displayName}
+          <ReputationBadge score={seat.user.neynarScore} />
           {isHero ? "  · You" : ""}
         </strong>
         <small>

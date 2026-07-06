@@ -68,6 +68,20 @@ async function initializeDb() {
     )
   `);
 
+  // ── Migration: add min_vet_score to tables for user reputation gating
+  try {
+    await db.execute(`ALTER TABLE tables ADD COLUMN min_vet_score REAL DEFAULT 0`);
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // ── Migration: add neynar_score to players for caching user reputation
+  try {
+    await db.execute(`ALTER TABLE players ADD COLUMN neynar_score REAL DEFAULT 0.5`);
+  } catch {
+    // Column already exists — ignore
+  }
+
   // ── Migration: players PK was originally `fid INTEGER PRIMARY KEY` which
   // prevented multi-tabling. Recreate with composite PK if necessary.
   const { rows: pkInfo } = await db.execute(`PRAGMA table_info(players)`);

@@ -78,6 +78,7 @@ export function useUniversalUser(): UniversalUser {
         chainNamespace: walletAddress ? wallet.namespace : undefined,
         runtimeHost: "farcaster",
         authSource: "farcaster",
+        neynarScore: neynarUser?.score,
       };
     }
 

@@ -117,7 +117,13 @@ export async function resolveShowdown(
     winnings[player.fid] = 0;
   }
 
-  const pots = buildSidePots(activePlayers);
+  // Side pots must include ALL players who invested (including folders), so pot sizes are correct. Only active players can actually win.
+  const allPotPlayers = [...activePlayers, ...foldedRows.map((row: any) => ({
+    fid: Number(row.fid),
+    invested: Number(row.total_invested || 0),
+  }))];
+
+  const pots = buildSidePots(allPotPlayers);
 
   if (config.showdownType === "high-low") {
     // High-low split: each side pot is split 50/50 between high and low

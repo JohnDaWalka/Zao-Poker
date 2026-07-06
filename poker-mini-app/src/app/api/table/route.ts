@@ -29,6 +29,75 @@ function ensureDb() {
   return dbReady;
 }
 
+/**
+ * Fetch a user's Neynar quality score (0.0-1.0).
+ * Returns null on error or if the API key is missing.
+ * Caches the result in the players table when a table_id is provided.
+ */
+async function fetchNeynarScore(fid: number): Promise<number | null> {
+  const apiKey = process.env.NEYNAR_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.neynar.com/v2/farcaster/user/bulk?fids=${fid}`,
+      {
+        headers: { "x-api-key": apiKey },
+        next: { revalidate: 60 },
+      },
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    const user = data.users?.[0];
+    if (!user) {
+      return null;
+    }
+
+    const score = user.experimental?.neynar_user_score;
+    if (typeof score === "number") {
+      return score;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Vetting check: returns true if the user meets the table's min_vet_score.
+ * If no API key or fetch fails, allows entry (fail-open for resilience).
+ */
+async function isUserVetted(fid: number, minVetScore: number): Promise<boolean> {
+  if (minVetScore <= 0) {
+    return true;
+  }
+
+  const score = await fetchNeynarScore(fid);
+  if (score === null) {
+    return true; // Fail-open if API unavailable
+  }
+
+  return score >= minVetScore;
+}
+
+/**
+ * Compute a default min_vet_score based on table stakes.
+ * Higher buy-in tables require higher reputation scores.
+ */
+function getDefaultMinVetScore(buyIn: number): number {
+  if (buyIn >= 500) return 0.85; // Elite tables
+  if (buyIn >= 100) return 0.70; // High stakes
+  if (buyIn >= 50) return 0.55; // Medium stakes
+  return 0; // Low stakes / practice — no vetting
+}
+
 async function withTransaction<T>(fn: () => Promise<T>): Promise<T> {
   await db.execute("BEGIN TRANSACTION");
   try {
@@ -462,7 +531,7 @@ export async function dealNewHand(tableId: string, fids: number[]) {
   const firstStreet = config.streets[0].phase;
 
   await db.execute({
-    sql: "UPDATE tables SET pot_size = ?, current_bet = ?, board = '', deck = ?, action_history = '', phase = ?, status = 'playing', current_turn_fid = ?, last_aggressor_fid = ?, dealer_seat_index = ?, turn_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    sql: "UPDATE tables SET pot_size = ?, current_bet = ?, board = '', deck = ?, action_history = '', phase = ?, status = 'playing', current_turn_fid = ?, last_aggressor_fid = ?, last_raise_amount = 0, dealer_seat_index = ?, turn_started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
     args: [potSize, highestPostedBlind, deckStr, firstStreet, currentTurnFid, lastAggressorFid, newDealerSeatIndex, tableId]
   });
 
@@ -565,7 +634,7 @@ export async function advanceGame(tableId: string, currentState: any) {
     }
 
     await db.execute({
-      sql: "UPDATE tables SET board = ?, deck = ?, phase = ?, current_bet = 0, current_turn_fid = ?, last_aggressor_fid = NULL, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
+      sql: "UPDATE tables SET board = ?, deck = ?, phase = ?, current_bet = 0, current_turn_fid = ?, last_aggressor_fid = NULL, last_raise_amount = 0, turn_started_at = CURRENT_TIMESTAMP WHERE id = ?",
       args: [board.join(","), deck.join(","), nextPhase, newCurrentTurnFid, tableId]
     });
 
@@ -602,6 +671,7 @@ function getTableMetadata(tableState: any) {
     visibility: String(tableState.visibility || "public"),
     club_id: tableState.club_id ? String(tableState.club_id) : null,
     club_name: tableState.club_name ? String(tableState.club_name) : null,
+    min_vet_score: Number(tableState.min_vet_score || 0),
   };
 }
 
@@ -1016,7 +1086,7 @@ async function getTableSnapshot(tableId: string, currentFid?: number) {
   }
 
   const { rows: players } = await db.execute({
-    sql: "SELECT fid, username, pfp_url, stack_size, hand, visible_cards, current_bet, status, seat_index, is_ready, is_bot FROM players WHERE table_id = ? ORDER BY seat_index ASC",
+    sql: "SELECT fid, username, pfp_url, stack_size, hand, visible_cards, current_bet, status, seat_index, is_ready, is_bot, neynar_score FROM players WHERE table_id = ? ORDER BY seat_index ASC",
     args: [tableId],
   });
 
@@ -1415,6 +1485,8 @@ export async function POST(request: Request) {
 
       effectiveTableId = createCustomTableId(tableName);
 
+      const minVetScore = getDefaultMinVetScore(buyIn);
+
       await db.execute({
         sql: `
           INSERT INTO tables (
@@ -1431,8 +1503,9 @@ export async function POST(request: Request) {
             start_time,
             created_by_fid,
             created_at,
-            updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            updated_at,
+            min_vet_score
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
         `,
         args: [
           effectiveTableId,
@@ -1445,6 +1518,7 @@ export async function POST(request: Request) {
           clubId,
           clubName,
           fid,
+          minVetScore,
         ],
       });
     } else {
@@ -1485,6 +1559,17 @@ export async function POST(request: Request) {
       // The table row is already inserted above; the unified response builder
       // below returns the hydrated table state.
     } else if (action === "join") {
+      const minVetScore = Number(requestedTable.min_vet_score || 0);
+      if (minVetScore > 0) {
+        const vetted = await isUserVetted(fid, minVetScore);
+        if (!vetted) {
+          return NextResponse.json(
+            { success: false, error: `This table requires a reputation score of at least ${(minVetScore * 100).toFixed(0)}. Your Neynar score is too low.` },
+            { status: 403 },
+          );
+        }
+      }
+
       await db.execute({
         sql: "DELETE FROM players WHERE table_id = ? AND is_bot = 0 AND (strftime('%s', CURRENT_TIMESTAMP) - strftime('%s', last_seen)) > 600",
         args: [effectiveTableId],
@@ -1540,15 +1625,23 @@ export async function POST(request: Request) {
 
       const seatIndex = getLowestOpenSeat(currentPlayers, maxPlayers);
 
+      // Fetch and cache the user's Neynar score for display
+      let neynarScore: number | null = null;
+      try {
+        neynarScore = await fetchNeynarScore(fid);
+      } catch {
+        // Ignore fetch errors, score remains null
+      }
+
       if (isAlreadySeated) {
         await db.execute({
-          sql: "UPDATE players SET username = ?, pfp_url = ?, last_seen = CURRENT_TIMESTAMP WHERE fid = ? AND table_id = ?",
-          args: [username || `User#${fid}`, pfp_url || "", fid, effectiveTableId],
+          sql: "UPDATE players SET username = ?, pfp_url = ?, last_seen = CURRENT_TIMESTAMP, neynar_score = COALESCE(?, neynar_score) WHERE fid = ? AND table_id = ?",
+          args: [username || `User#${fid}`, pfp_url || "", neynarScore, fid, effectiveTableId],
         });
       } else {
         await db.execute({
-          sql: "INSERT OR REPLACE INTO players (fid, username, pfp_url, table_id, seat_index, stack_size, hand, current_bet, status, is_bot, is_ready, has_acted, total_invested, last_seen) VALUES (?, ?, ?, ?, ?, 5000, '', 0, 'waiting', 0, 0, 0, 0, CURRENT_TIMESTAMP)",
-          args: [fid, username || `User#${fid}`, pfp_url || "", effectiveTableId, seatIndex]
+          sql: "INSERT OR REPLACE INTO players (fid, username, pfp_url, table_id, seat_index, stack_size, hand, current_bet, status, is_bot, is_ready, has_acted, total_invested, last_seen, neynar_score) VALUES (?, ?, ?, ?, ?, 5000, '', 0, 'waiting', 0, 0, 0, 0, CURRENT_TIMESTAMP, ?)",
+          args: [fid, username || `User#${fid}`, pfp_url || "", effectiveTableId, seatIndex, neynarScore]
         });
       }
 
