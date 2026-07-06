@@ -156,7 +156,7 @@ export function getNextStreet(config: GameConfig, phase: string): Street | null 
   return config.streets[idx + 1];
 }
 
-export function getPreviousStreet(config: GameConfig, phase: string): Street | null {
+function getPreviousStreet(config: GameConfig, phase: string): Street | null {
   const idx = config.streets.findIndex((s) => s.phase === phase);
   if (idx <= 0) return null;
   return config.streets[idx - 1];
@@ -335,7 +335,7 @@ export function calculateBringIn(
 
 /* ──────────────────── BETTING LIMITS ──────────────────── */
 
-export function getMinBet(config: GameConfig, bb: number, phase: string): number {
+function getMinBet(config: GameConfig, bb: number, phase: string): number {
   switch (config.bettingLimit) {
     case "NL":
     case "PL":
@@ -351,7 +351,7 @@ export function getMinBet(config: GameConfig, bb: number, phase: string): number
   }
 }
 
-export function getMaxBet(config: GameConfig, potSize: number, currentBet: number, playerStack: number, toCall: number): number {
+function getMaxBet(config: GameConfig, potSize: number, currentBet: number, playerStack: number, toCall: number): number {
   switch (config.bettingLimit) {
     case "NL":
       return playerStack + toCall;
@@ -370,25 +370,25 @@ export function getMaxBet(config: GameConfig, potSize: number, currentBet: numbe
 
 /* ──────────────────── UTILS ──────────────────── */
 
-export function parseHand(handStr: string): Card[] {
+function parseHand(handStr: string): Card[] {
   return handStr.split(",").map((c) => c.trim()).filter(Boolean);
 }
 
-export function parseVisibleCards(visStr: string): Card[] {
+function parseVisibleCards(visStr: string): Card[] {
   return visStr.split(",").map((c) => c.trim()).filter(Boolean);
 }
 
-export function buildHand(cards: Card[]): string {
+function buildHand(cards: Card[]): string {
   return cards.join(",");
 }
 
-export function addCardToHand(handStr: string, card: Card): string {
+function addCardToHand(handStr: string, card: Card): string {
   const existing = parseHand(handStr);
   existing.push(card);
   return buildHand(existing);
 }
 
-export function addVisibleCard(visStr: string, card: Card): string {
+function addVisibleCard(visStr: string, card: Card): string {
   const existing = parseVisibleCards(visStr);
   existing.push(card);
   return buildHand(existing);

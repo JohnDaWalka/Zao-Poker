@@ -247,13 +247,18 @@ async function initializeDb() {
   // Existing Turso databases predate the multiplayer columns. Migrate them
   // in place so a serverless cold start never deletes active tables or seats.
   await addMissingColumns("tables", {
+    name: "TEXT",
     game_type: "TEXT DEFAULT 'NLHE'",
     stakes_label: "TEXT DEFAULT '$0.50 / $1'",
+    max_players: "INTEGER DEFAULT 6",
     buy_in: "INTEGER DEFAULT 50",
-    visibility: "TEXT DEFAULT 'public'",
-    club_id: "TEXT",
-    club_name: "TEXT DEFAULT ''",
+    status: "TEXT DEFAULT 'waiting'",
+    pot_size: "INTEGER DEFAULT 0",
+    current_bet: "INTEGER DEFAULT 0",
+    board: "TEXT DEFAULT ''",
+    deck: "TEXT DEFAULT ''",
     action_history: "TEXT DEFAULT ''",
+    phase: "TEXT DEFAULT 'preflop'",
     start_time: "DATETIME",
     created_by_fid: "INTEGER",
     created_at: "DATETIME",
@@ -262,6 +267,9 @@ async function initializeDb() {
     dealer_seat_index: "INTEGER DEFAULT 0",
     turn_started_at: "DATETIME",
     updated_at: "DATETIME",
+    visibility: "TEXT DEFAULT 'public'",
+    club_id: "TEXT",
+    club_name: "TEXT DEFAULT ''",
   });
 
   await addMissingColumns("players", {

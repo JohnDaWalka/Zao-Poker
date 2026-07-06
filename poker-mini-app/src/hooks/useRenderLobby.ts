@@ -209,6 +209,8 @@ export function useRenderLobby(currentUser?: UniversalUser) {
   const wsRef = useRef<WebSocket | null>(null);
   const stateVersionRef = useRef(0);
   const appliedStateVersionRef = useRef(0);
+  const cancelledRef = useRef(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [state, setState] = useState<LobbyState>({
     tables: [],
     updatedAt: Date.now(),
@@ -219,7 +221,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
   const [error, setError] = useState<string | null>(null);
 
   const wsUrl = useMemo(() => {
-    if (!env.hasRenderLobby) return "";
+    if (!env.hasRenderLobby || !env.renderWsUrl) return "";
     return `${env.renderWsUrl.replace(/\/$/, "")}/ws`;
   }, []);
   const currentFid =
@@ -422,8 +424,8 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       return () => clearInterval(interval);
     }
 
-    let cancelled = false;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    cancelledRef.current = false;
+    reconnectTimerRef.current = null;
 
     async function fetchFallback() {
       try {
@@ -435,7 +437,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         if (!response.ok) return;
 
         const data = (await response.json()) as LobbyState;
-        if (!cancelled) {
+        if (!cancelledRef.current && Array.isArray(data.tables)) {
           setState(data);
         }
       } catch {
@@ -444,14 +446,14 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     }
 
     function connect() {
-      if (cancelled) return;
+      if (cancelledRef.current) return;
 
       setStatus("connecting");
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (cancelled) return;
+        if (cancelledRef.current) return;
         setStatus("connected");
         setError(null);
         ws.send(JSON.stringify({ type: "get_state" }));
@@ -496,14 +498,14 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       };
 
       ws.onclose = () => {
-        if (cancelled) return;
+        if (cancelledRef.current) return;
         setStatus("disconnected");
         void fetchFallback();
-        reconnectTimer = setTimeout(connect, 1500);
+        reconnectTimerRef.current = setTimeout(connect, 1500);
       };
 
       ws.onerror = () => {
-        if (cancelled) return;
+        if (cancelledRef.current) return;
         setStatus("disconnected");
         setError("Lobby socket connection failed.");
       };
@@ -512,9 +514,10 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     connect();
 
     return () => {
-      cancelled = true;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
+      cancelledRef.current = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
       wsRef.current?.close();
     };

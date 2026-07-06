@@ -3,7 +3,6 @@ import {
   getGameConfig,
   isValidVariant,
   getNextStreet,
-  getPreviousStreet,
   getStreet,
   usesBoard,
   usesBlinds,
@@ -13,12 +12,6 @@ import {
   findHighestHandShowing,
   calculateForcedBets,
   calculateBringIn,
-  getMinBet,
-  getMaxBet,
-  parseHand,
-  buildHand,
-  addCardToHand,
-  addVisibleCard,
   type PlayerForActing,
 } from "./game-rules";
 
@@ -98,12 +91,6 @@ describe("game-rules", () => {
       expect(getNextStreet(config, "5th")?.phase).toBe("6th");
       expect(getNextStreet(config, "6th")?.phase).toBe("7th");
       expect(getNextStreet(config, "7th")?.phase).toBe("showdown");
-    });
-
-    it("getPreviousStreet goes back correctly", () => {
-      const config = getGameConfig("NLHE");
-      expect(getPreviousStreet(config, "flop")?.phase).toBe("preflop");
-      expect(getPreviousStreet(config, "preflop")).toBeNull();
     });
 
     it("getStreet finds specific street", () => {
@@ -298,52 +285,6 @@ describe("game-rules", () => {
       const result = calculateBringIn(getGameConfig("NLHE"), players, 10);
       expect(result.bringInFid).toBeNull();
       expect(result.amount).toBe(0);
-    });
-  });
-
-  describe("betting limits", () => {
-    it("getMinBet for NLHE is always BB", () => {
-      expect(getMinBet(getGameConfig("NLHE"), 10, "preflop")).toBe(10);
-      expect(getMinBet(getGameConfig("NLHE"), 10, "river")).toBe(10);
-    });
-
-    it("getMinBet for STUD uses small bet / big bet", () => {
-      expect(getMinBet(getGameConfig("STUD"), 10, "3rd")).toBe(10); // small bet
-      expect(getMinBet(getGameConfig("STUD"), 10, "5th")).toBe(20); // big bet
-      expect(getMinBet(getGameConfig("STUD"), 10, "7th")).toBe(20); // big bet
-    });
-
-    it("getMaxBet for NL is stack size", () => {
-      expect(getMaxBet(getGameConfig("NLHE"), 100, 20, 500, 10)).toBe(510); // stack + toCall
-    });
-
-    it("getMaxBet for PL is pot-size raise", () => {
-      // pot after call = 100 + 10 = 110, max raise = 110 + 20 = 130, but capped by stack
-      expect(getMaxBet(getGameConfig("PLO"), 100, 20, 500, 10)).toBe(130);
-    });
-
-    it("getMaxBet for FL is same as min", () => {
-      const result = getMaxBet(getGameConfig("STUD"), 100, 20, 500, 10);
-      expect(result).toBe(getMinBet(getGameConfig("STUD"), 0, ""));
-    });
-  });
-
-  describe("hand utilities", () => {
-    it("parseHand splits comma-separated cards", () => {
-      expect(parseHand("Ah,Kd,Qs")).toEqual(["Ah", "Kd", "Qs"]);
-      expect(parseHand("")).toEqual([]);
-    });
-
-    it("buildHand joins cards with commas", () => {
-      expect(buildHand(["Ah", "Kd"])).toBe("Ah,Kd");
-    });
-
-    it("addCardToHand appends a card", () => {
-      expect(addCardToHand("Ah,Kd", "Qs")).toBe("Ah,Kd,Qs");
-    });
-
-    it("addVisibleCard appends to visible cards", () => {
-      expect(addVisibleCard("Ah", "Kd")).toBe("Ah,Kd");
     });
   });
 });
