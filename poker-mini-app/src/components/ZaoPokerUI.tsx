@@ -2615,6 +2615,29 @@ function ProfileView({
   analytics: ReturnType<typeof usePokerProductData>["analytics"];
   bestFriendCount: number;
 }) {
+  const [dossier, setDossier] = useState<Array<{
+    hand_id: string;
+    analysis: string;
+    tags: string[];
+    confidence: number;
+    variant: string;
+    pot_size: number;
+    created_at: string;
+  }> | null>(null);
+  const [dossierLoading, setDossierLoading] = useState(false);
+
+  useEffect(() => {
+    if (!user.fid) return;
+    setDossierLoading(true);
+    fetch(`/api/dossier?fid=${user.fid}&limit=20`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success) setDossier(data.entries);
+      })
+      .catch(() => setDossier(null))
+      .finally(() => setDossierLoading(false));
+  }, [user.fid]);
+
   return (
     <div className="ls-view">
       <div className="ls-view-header">
@@ -2654,6 +2677,68 @@ function ProfileView({
             leaderboard stats, and social identity.
           </p>
         </div>
+      </section>
+
+      <section className="ls-play-panel" style={{ marginTop: "24px" }}>
+        <h3 style={{ fontSize: "1rem", marginBottom: "12px", color: "#e2e8f0" }}>
+          🧠 AI Coaching History
+        </h3>
+        {dossierLoading && <p className="text-sm text-gray-400">Loading sessions...</p>}
+        {!dossierLoading && dossier && dossier.length === 0 && (
+          <p className="text-sm text-gray-500">No coaching sessions yet. Use "Get AI Coach" at the table.</p>
+        )}
+        {!dossierLoading && dossier && dossier.length > 0 && (
+          <div className="space-y-3">
+            {dossier.map((entry) => (
+              <div
+                key={entry.hand_id}
+                style={{
+                  background: "#0f172a",
+                  border: "1px solid #334155",
+                  borderRadius: "8px",
+                  padding: "10px 12px",
+                  fontSize: "0.75rem",
+                  lineHeight: 1.5,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+                  <span
+                    style={{
+                      fontSize: "0.65rem",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.03em",
+                      padding: "1px 6px",
+                      borderRadius: "999px",
+                      backgroundColor: entry.confidence > 0.8 ? "#d1fae5" : "#fef3c7",
+                      color: entry.confidence > 0.8 ? "#059669" : "#d97706",
+                    }}
+                  >
+                    {(entry.confidence * 100).toFixed(0)}% Conf
+                  </span>
+                  {entry.tags.slice(0, 3).map((tag) => (
+                    <span
+                      key={tag}
+                      style={{
+                        fontSize: "0.6rem",
+                        color: "#94a3b8",
+                        background: "#1e293b",
+                        padding: "1px 5px",
+                        borderRadius: "4px",
+                      }}
+                    >
+                      #{tag}
+                    </span>
+                  ))}
+                  <span style={{ marginLeft: "auto", fontSize: "0.65rem", color: "#64748b" }}>
+                    {new Date(entry.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                <p style={{ color: "#e2e8f0", margin: 0 }}>{entry.analysis}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

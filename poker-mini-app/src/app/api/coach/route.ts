@@ -1,6 +1,19 @@
 import { NextResponse } from "next/server";
 import { heroEquity } from "~/lib/equity-engine";
+import { db, initDb } from "~/lib/db";
 import { randomUUID } from "crypto";
+
+let dbReady: Promise<void> | null = null;
+
+function ensureDb() {
+  if (!dbReady) {
+    dbReady = initDb().catch((error) => {
+      dbReady = null;
+      throw error;
+    });
+  }
+  return dbReady;
+}
 
 /** AI coaching response shape (matches original Python backend). */
 interface CoachResponse {
@@ -115,6 +128,38 @@ export async function POST(request: Request) {
       gto: equity,
     };
 
+    // Save to player dossier for history review
+    try {
+      await ensureDb();
+      const handId = hashHand(cards);
+      await db.execute({
+        sql: `
+          INSERT INTO dossier_entries (
+            fid, hand_id, analysis, tags, confidence, variant, pot_size, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(fid, hand_id) DO UPDATE SET
+            analysis = excluded.analysis,
+            tags = excluded.tags,
+            confidence = excluded.confidence,
+            variant = excluded.variant,
+            pot_size = excluded.pot_size,
+            created_at = CURRENT_TIMESTAMP
+        `,
+        args: [
+          fid,
+          handId,
+          analysis,
+          tags.join(","),
+          confidence,
+          variant,
+          pot_size ?? 0,
+        ],
+      });
+      console.log(`[${requestId}] Saved to dossier: fid=${fid}, hand_id=${handId}`);
+    } catch (saveErr) {
+      console.error(`[${requestId}] Dossier save failed:`, saveErr);
+    }
+
     console.log(`[${requestId}] Coach analysis complete (${Date.now() - startTime}ms)`);
     return NextResponse.json(result);
   } catch (e) {
@@ -197,4 +242,14 @@ function deriveDefaultTags(action: string, winRate: number): string[] {
   if (action === "check") tags.push("pot-control");
   if (tags.length === 0) tags.push("standard-line");
   return tags;
+}
+
+/** Create a stable hand_id from the card list for dossier deduplication. */
+function hashHand(cards: string[]): string {
+  const sorted = [...cards].sort().join("");
+  let h = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    h = ((h << 5) - h + sorted.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(36).slice(0, 12);
 }
