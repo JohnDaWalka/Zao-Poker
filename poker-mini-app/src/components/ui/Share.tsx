@@ -4,6 +4,7 @@ import { useCallback, useState, useEffect } from 'react';
 import { Button } from './Button';
 import { useMiniApp } from '@neynar/react';
 import { type ComposeCast } from "@farcaster/miniapp-sdk";
+import { getApiUrl } from '~/lib/env';
 import { APP_URL } from '~/lib/constants';
 
 interface EmbedConfig {
@@ -34,7 +35,7 @@ export function ShareButton({ buttonText, cast, className = '', isLoading = fals
   useEffect(() => {
     if (cast.bestFriends && context?.user?.fid) {
       setIsLoadingBestFriends(true);
-      fetch(`/api/best-friends?fid=${context.user.fid}`)
+      fetch(getApiUrl(`/api/best-friends?fid=${context.user.fid}`))
         .then(res => res.json())
         .then(data => setBestFriends(data.bestFriends))
         .catch(err => console.error('Failed to fetch best friends:', err))

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getApiUrl } from "~/lib/env";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
 
 type HandRow = {
@@ -53,7 +54,7 @@ export function HandAnalysisTab() {
     let cancelled = false;
     const fetchHands = async () => {
       try {
-        const res = await fetch(`/api/stats/hands?fid=${universalUser.fid}&limit=25`);
+        const res = await fetch(getApiUrl(`/api/stats/hands?fid=${universalUser.fid}&limit=25`));
         const json = await res.json();
         if (!cancelled && json.success) {
           setHands(json.hands);

@@ -1,5 +1,6 @@
 "use client";
 
+import { getApiUrl } from "~/lib/env";
 import { useCallback, useEffect, useState } from "react";
 import type { UniversalUser } from "~/types/universal";
 
@@ -53,10 +54,9 @@ export function useTableChat(tableId: string | null, viewerFid?: number) {
       setLoading(true);
     }
     try {
-      const response = await fetch(
-        `/api/table/chat?table_id=${encodeURIComponent(tableId)}&limit=50${
+      const response = await fetch(getApiUrl(`/api/table/chat?table_id=${encodeURIComponent(tableId)}&limit=50${
           Number.isSafeInteger(viewerFid) ? `&fid=${encodeURIComponent(String(viewerFid))}` : ""
-        }`,
+        }`),
         { cache: "no-store", signal },
       );
       const data = (await response.json()) as TableChatResponse & { error?: string };
@@ -111,7 +111,7 @@ export function useTableChat(tableId: string | null, viewerFid?: number) {
 
     setSending(true);
     try {
-      const response = await fetch("/api/table/chat", {
+      const response = await fetch(getApiUrl("/api/table/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -155,7 +155,7 @@ export function useTableChat(tableId: string | null, viewerFid?: number) {
 
     setModerating(payload.targetFid);
     try {
-      const response = await fetch("/api/table/chat/moderation", {
+      const response = await fetch(getApiUrl("/api/table/chat/moderation"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

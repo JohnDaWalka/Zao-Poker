@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getApiUrl } from "~/lib/env";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
 import { LineAreaChart } from "~/components/ui/charts/LineAreaChart";
 
@@ -24,7 +25,7 @@ export function AnalyticsTab() {
     let cancelled = false;
     const fetchAnalytics = async () => {
       try {
-        const res = await fetch(`/api/stats/analytics?fid=${universalUser.fid}&days=14`);
+        const res = await fetch(getApiUrl(`/api/stats/analytics?fid=${universalUser.fid}&days=14`));
         const json = await res.json();
         if (!cancelled && json.success) {
           setData(json.analytics);

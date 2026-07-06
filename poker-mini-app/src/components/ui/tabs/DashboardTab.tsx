@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getApiUrl } from "~/lib/env";
 import { FlaskConical, Flame, Trophy, Wallet } from "lucide-react";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
 import { LineAreaChart } from "~/components/ui/charts/LineAreaChart";
@@ -29,7 +30,7 @@ export function DashboardTab() {
     let cancelled = false;
     const fetchDashboard = async () => {
       try {
-        const res = await fetch(`/api/stats/dashboard?fid=${universalUser.fid}`);
+        const res = await fetch(getApiUrl(`/api/stats/dashboard?fid=${universalUser.fid}`));
         const json = await res.json();
         if (!cancelled && json.success) {
           setData(json.dashboard);

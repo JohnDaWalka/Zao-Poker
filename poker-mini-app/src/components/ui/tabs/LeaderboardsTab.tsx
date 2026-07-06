@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactElement } from "react";
+import { getApiUrl } from "~/lib/env";
 import { Award, Medal, Trophy } from "lucide-react";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
 
@@ -31,7 +32,7 @@ export function LeaderboardsTab() {
     let cancelled = false;
     const fetchLeaderboard = async () => {
       try {
-        const res = await fetch(`/api/stats/leaderboard?fid=${universalUser.fid}&limit=20`);
+        const res = await fetch(getApiUrl(`/api/stats/leaderboard?fid=${universalUser.fid}&limit=20`));
         const json = await res.json();
         if (!cancelled && json.success) {
           setLeaderboard(json.leaderboard);

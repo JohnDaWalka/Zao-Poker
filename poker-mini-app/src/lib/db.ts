@@ -99,12 +99,12 @@ async function initializeDb() {
       INSERT OR IGNORE INTO players_new (
         fid, username, pfp_url, table_id, seat_index, stack_size, hand,
         current_bet, status, is_bot, is_ready, has_acted, total_invested,
-        joined_at, last_seen, visible_cards
+        joined_at, last_seen
       )
       SELECT
         fid, username, pfp_url, table_id, seat_index, stack_size, hand,
         current_bet, status, is_bot, is_ready, has_acted, total_invested,
-        joined_at, last_seen, visible_cards
+        joined_at, last_seen
       FROM players
     `);
     await db.execute(`DROP TABLE IF EXISTS players`);

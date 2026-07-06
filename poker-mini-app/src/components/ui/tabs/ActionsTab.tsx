@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { getApiUrl } from '~/lib/env';
 import { useMiniApp } from '@neynar/react';
 import { ShareButton } from '../Share';
 import { Button } from '../Button';
@@ -56,7 +57,7 @@ export function ActionsTab() {
       return;
     }
     try {
-      const response = await fetch('/api/send-notification', {
+      const response = await fetch(getApiUrl('/api/send-notification'), {
         method: 'POST',
         mode: 'same-origin',
         headers: { 'Content-Type': 'application/json' },

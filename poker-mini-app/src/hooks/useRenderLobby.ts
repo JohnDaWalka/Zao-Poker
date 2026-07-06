@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getPublicEnv } from "~/lib/env";
+import { getPublicEnv, getApiUrl } from "~/lib/env";
 import type { UniversalUser } from "~/types/universal";
 
 export type GameType = "NLHE" | "PLO" | "PLO8" | "STUD8";
@@ -355,9 +355,11 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
     try {
       const response = await fetch(
-        currentFid !== null
-          ? `/api/table?fid=${encodeURIComponent(String(currentFid))}`
-          : "/api/table",
+        getApiUrl(
+          currentFid !== null
+            ? `/api/table?fid=${encodeURIComponent(String(currentFid))}`
+            : "/api/table",
+        ),
         { cache: "no-store" },
       );
 
@@ -372,9 +374,11 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         tables.map(async (table) => {
           try {
             const detailResponse = await fetch(
-              `/api/table?table_id=${encodeURIComponent(table.id)}${
-                currentFid !== null ? `&fid=${encodeURIComponent(String(currentFid))}` : ""
-              }`,
+              getApiUrl(
+                `/api/table?table_id=${encodeURIComponent(table.id)}${
+                  currentFid !== null ? `&fid=${encodeURIComponent(String(currentFid))}` : ""
+                }`,
+              ),
               { cache: "no-store" }
             );
 
@@ -539,7 +543,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
       const actionUrl = env.hasRenderLobby
         ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
-        : "/api/table";
+        : getApiUrl("/api/table");
       try {
         const response = await fetch(actionUrl, {
           method: "POST",
@@ -580,7 +584,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
       const actionUrl = env.hasRenderLobby
         ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
-        : "/api/table";
+        : getApiUrl("/api/table");
       try {
         const response = await fetch(actionUrl, {
           method: "POST",
@@ -625,7 +629,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       }
 
       try {
-        const response = await fetch("/api/table", {
+        const response = await fetch(getApiUrl("/api/table"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -661,7 +665,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
       const actionUrl = env.hasRenderLobby
         ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
-        : "/api/table";
+        : getApiUrl("/api/table");
       try {
         const response = await fetch(actionUrl, {
           method: "POST",
@@ -708,7 +712,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
       const actionUrl = env.hasRenderLobby
         ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
-        : "/api/table";
+        : getApiUrl("/api/table");
 
       try {
         const response = await fetch(actionUrl, {
@@ -749,7 +753,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
       const actionUrl = env.hasRenderLobby
         ? `${env.renderApiUrl.replace(/\/$/, "")}/api/table`
-        : "/api/table";
+        : getApiUrl("/api/table");
       try {
         const response = await fetch(actionUrl, {
           method: "POST",

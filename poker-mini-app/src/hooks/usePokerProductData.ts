@@ -1,5 +1,6 @@
 "use client";
 
+import { getApiUrl } from "~/lib/env";
 import { useEffect, useState } from "react";
 import type { AuthSource } from "~/types/universal";
 
@@ -133,28 +134,28 @@ export function usePokerProductData(fid: number, authSource: AuthSource) {
     async function load() {
       const requests = await Promise.allSettled([
         fetchJson<DashboardResponse>(
-          `/api/stats/dashboard?fid=${encodeURIComponent(String(fid))}`,
+          getApiUrl(`/api/stats/dashboard?fid=${encodeURIComponent(String(fid))}`),
           "dashboard",
           abortController.signal,
         ),
         fetchJson<AnalyticsResponse>(
-          `/api/stats/analytics?fid=${encodeURIComponent(String(fid))}&days=14`,
+          getApiUrl(`/api/stats/analytics?fid=${encodeURIComponent(String(fid))}&days=14`),
           "analytics",
           abortController.signal,
         ),
         fetchJson<HandsResponse>(
-          `/api/stats/hands?fid=${encodeURIComponent(String(fid))}&limit=8`,
+          getApiUrl(`/api/stats/hands?fid=${encodeURIComponent(String(fid))}&limit=8`),
           "hand history",
           abortController.signal,
         ),
         fetchJson<LeaderboardResponse>(
-          `/api/stats/leaderboard?fid=${encodeURIComponent(String(fid))}&limit=12`,
+          getApiUrl(`/api/stats/leaderboard?fid=${encodeURIComponent(String(fid))}&limit=12`),
           "leaderboard",
           abortController.signal,
         ),
         authSource === "farcaster"
           ? fetchJson<BestFriendsResponse>(
-              `/api/best-friends?fid=${encodeURIComponent(String(fid))}`,
+              getApiUrl(`/api/best-friends?fid=${encodeURIComponent(String(fid))}`),
               "best friends",
               abortController.signal,
             )

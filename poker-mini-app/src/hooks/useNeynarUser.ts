@@ -1,3 +1,4 @@
+import { getApiUrl } from "~/lib/env";
 import { useEffect, useState } from "react";
 
 export interface NeynarUser {
@@ -20,7 +21,7 @@ export function useNeynarUser(context?: { user?: { fid?: number } }) {
     }
     setLoading(true);
     setError(null);
-    fetch(`/api/users?fids=${context.user.fid}`)
+    fetch(getApiUrl(`/api/users?fids=${context.user.fid}`))
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         return response.json();

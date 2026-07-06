@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getApiUrl } from "~/lib/env";
 import {
   usePokerProductData,
   type AnalyticsData,
@@ -1584,6 +1585,9 @@ function ActionTableView({
       <section className="ls-play-layout">
         <div className="ls-play-main">
           <div className="ls-board-stage">
+            {hand.street === "showdown" && (
+              <ShowdownBanner heroHasCards={hand.heroHoleCards.length > 0} pot={hand.pot} />
+            )}
             <div className="ls-pot-orb">
               <small>Pot</small>
               <strong>{formatMoney(hand.pot)}</strong>
@@ -1687,6 +1691,29 @@ function HeroHoleCards({
           <CardFace key={`${card.rank}-${card.suit}-${index}`} card={card} size="hole" index={index} />
         ))}
       </div>
+    </div>
+  );
+}
+
+function ShowdownBanner({
+  heroHasCards,
+  pot,
+}: {
+  heroHasCards: boolean;
+  pot: number;
+}) {
+  if (heroHasCards) {
+    return (
+      <div className="ls-win-banner">
+        <strong>You Win!</strong>
+        <small>Pot: {formatMoney(pot)}</small>
+      </div>
+    );
+  }
+  return (
+    <div className="ls-lose-banner">
+      <strong>You Folded</strong>
+      <small>Better luck next hand</small>
     </div>
   );
 }
@@ -1996,7 +2023,7 @@ function AnalysisView({
         return;
       }
       try {
-        const response = await fetch("/api/analyze", {
+        const response = await fetch(getApiUrl("/api/analyze"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -2233,7 +2260,7 @@ function AnalysisView({
               </div>
             </div>
 
-            <div className="ls-hand-result">
+            <div className={`ls-hand-result ${hand.result === "win" ? "win" : hand.result === "loss" ? "loss" : ""}`}>
               <strong>{formatCurrency(hand.netAmount)}</strong>
               <span>{hand.result.slice(0, 1).toUpperCase()}</span>
             </div>

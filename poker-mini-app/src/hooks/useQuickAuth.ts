@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { getApiUrl } from '~/lib/env';
 import { sdk } from '@farcaster/miniapp-sdk';
 
 /**
@@ -78,7 +79,7 @@ export function useQuickAuth(): UseQuickAuthReturn {
     authToken: string,
   ): Promise<AuthenticatedUser | null> => {
     try {
-      const validationResponse = await fetch('/api/auth/validate', {
+      const validationResponse = await fetch(getApiUrl('/api/auth/validate'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: authToken }),

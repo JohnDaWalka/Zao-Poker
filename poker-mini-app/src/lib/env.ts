@@ -60,6 +60,21 @@ export function getPublicEnv() {
   };
 }
 
+/**
+ * Build a public API URL that works across environments:
+ * - Local dev: `http://localhost:3000/api/table`
+ * - Vercel (self-contained): `https://<app>.vercel.app/api/table`
+ * - Render split: `https://<render>.onrender.com/api/table`
+ */
+export function getApiUrl(path: string): string {
+  const env = getPublicEnv();
+  const baseUrl = env.hasRenderLobby
+    ? env.renderApiUrl.replace(/\/$/, "")
+    : env.appUrl.replace(/\/$/, "");
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${baseUrl}${cleanPath}`;
+}
+
 export function getServerEnv() {
   const vars = {
     TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,

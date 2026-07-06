@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getApiUrl } from "~/lib/env";
 import { UniversalConnectBar } from "~/components/ui/UniversalConnectBar";
 import { useRenderLobby } from "~/hooks/useRenderLobby";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
@@ -80,7 +81,7 @@ export function HomeTab() {
     if (gameState !== "lobby") return;
     const fetchLobby = async () => {
       try {
-        const res = await fetch("/api/table");
+        const res = await fetch(getApiUrl("/api/table"));
         const data = await res.json();
         if (res.ok && data.success) {
           setLobbyTables(data.tables);
@@ -103,7 +104,7 @@ export function HomeTab() {
     const myFid = Number(universalUser.fid);
     const fetchTableState = async () => {
       try {
-        const res = await fetch(`/api/table?table_id=${selectedTableId}&fid=${myFid}`);
+        const res = await fetch(getApiUrl(`/api/table?table_id=${selectedTableId}&fid=${myFid}`));
         const data = await res.json();
         if (data.success && data.gameState) {
           applyGameStateResponse(data, myFid);
@@ -177,7 +178,7 @@ export function HomeTab() {
     };
 
     try {
-      const res = await fetch("/api/table", {
+      const res = await fetch(getApiUrl("/api/table"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -201,7 +202,7 @@ export function HomeTab() {
 
   const handleLeaveTable = async () => {
     void sendEvent({ action: "user_left_table", table_id: selectedTableId });
-    await fetch("/api/table", {
+    await fetch(getApiUrl("/api/table"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -217,7 +218,7 @@ export function HomeTab() {
   };
 
   const handleStartPractice = async () => {
-    await fetch("/api/table", {
+    await fetch(getApiUrl("/api/table"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -231,7 +232,7 @@ export function HomeTab() {
   const handleNextHand = async () => {
     setCoachFeedback(null);
     setLastHandResult(null);
-    const res = await fetch("/api/table", {
+    const res = await fetch(getApiUrl("/api/table"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -265,7 +266,7 @@ export function HomeTab() {
       `p${universalUser.fid}:${action}${amount > 0 ? `:${Math.round(amount)}` : ""}`,
     ];
 
-    const res = await fetch("/api/table", {
+    const res = await fetch(getApiUrl("/api/table"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -306,7 +307,7 @@ export function HomeTab() {
     }
 
     try {
-      const resAnalyze = await fetch("/api/analyze", {
+      const resAnalyze = await fetch(getApiUrl("/api/analyze"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

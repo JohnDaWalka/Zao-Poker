@@ -1,5 +1,6 @@
 "use client";
 
+import { getApiUrl } from "~/lib/env";
 import { useCallback, useEffect, useState } from "react";
 import type { UniversalUser } from "~/types/universal";
 
@@ -100,7 +101,7 @@ export function usePokerClubs(user: UniversalUser, activeClubId?: string | null)
 
     setLoading(true);
     try {
-      const response = await fetch(`/api/clubs?fid=${encodeURIComponent(String(user.fid))}`, {
+      const response = await fetch(getApiUrl(`/api/clubs?fid=${encodeURIComponent(String(user.fid))}`), {
         cache: "no-store",
         signal,
       });
@@ -134,7 +135,7 @@ export function usePokerClubs(user: UniversalUser, activeClubId?: string | null)
     setDetailLoading(true);
     try {
       const response = await fetch(
-        `/api/clubs?fid=${encodeURIComponent(String(user.fid))}&club_id=${encodeURIComponent(clubId)}`,
+        getApiUrl(`/api/clubs?fid=${encodeURIComponent(String(user.fid))}&club_id=${encodeURIComponent(clubId)}`),
         {
           cache: "no-store",
           signal,
@@ -186,7 +187,7 @@ export function usePokerClubs(user: UniversalUser, activeClubId?: string | null)
   ) => {
     setMutating(mutationKey);
     try {
-      const response = await fetch("/api/clubs", {
+      const response = await fetch(getApiUrl("/api/clubs"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
