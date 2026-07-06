@@ -37,6 +37,8 @@
     "check:ws": "node scripts/check-ws.mjs",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "deploy:vercel": "tsx scripts/deploy.ts",
     "deploy:raw": "vercel --prod",
     "cleanup": "node scripts/cleanup.js"
@@ -90,7 +92,9 @@
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@vitest/coverage-v8": "^4.1.9",
     "typescript": "^5.9.3",
+    "vitest": "^4.1.9",
     "ws": "^8.21.0"
   },
   "overrides": {

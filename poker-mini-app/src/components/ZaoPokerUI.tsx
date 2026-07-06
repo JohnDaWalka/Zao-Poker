@@ -553,6 +553,7 @@ export default function ZaoPokerUI() {
                 // Also call local for compatibility
                 playTableAction(activeTable, action as any, amount);
               }}
+              onDealNextHand={() => dealNextHand(activeTable)}
             />
           )}
 
@@ -789,7 +790,7 @@ function LobbyView({
         </div>
 
         <button
-          className="ls-primary-button"
+          className="ls-primary-button ls-button-press"
           disabled={!canCreate}
           onClick={onCreate}
           type="button"
@@ -862,7 +863,7 @@ function LobbyView({
               />
             </label>
             <button
-              className="ls-secondary-button"
+              className="ls-secondary-button ls-button-press"
               disabled={clubActionLoading !== null || clubNameDraft.trim().length < 3}
               onClick={() => void submitCreateClub()}
               type="button"
@@ -884,7 +885,7 @@ function LobbyView({
               />
             </label>
             <button
-              className="ls-primary-button"
+              className="ls-primary-button ls-button-press"
               disabled={clubActionLoading !== null || inviteCodeDraft.trim().length < 4}
               onClick={() => void submitJoinClub()}
               type="button"
@@ -937,7 +938,7 @@ function LobbyView({
                 <div className="ls-club-inline-actions">
                   {clubDetail.isAdmin ? (
                     <button
-                      className="ls-secondary-button"
+                      className="ls-secondary-button ls-button-press"
                       disabled={clubMutating === `regenerate:${clubDetail.id}`}
                       onClick={() => void regenerateInvite()}
                       type="button"
@@ -1013,7 +1014,7 @@ function LobbyView({
                     <small>fid {member.fid}</small>
                     {clubDetail.isAdmin && member.role !== "owner" && member.fid !== viewerFid && (
                       <button
-                        className="ls-danger-button"
+                        className="ls-danger-button ls-button-press"
                         disabled={clubMutating === `remove:${member.fid}`}
                         onClick={() => void removeMember(member.fid)}
                         type="button"
@@ -1075,7 +1076,7 @@ function LobbyView({
                     {report.status === "open" ? (
                       <div className="ls-club-inline-actions">
                         <button
-                          className="ls-secondary-button"
+                          className="ls-secondary-button ls-button-press"
                           disabled={clubMutating === `report:${report.id}:dismissed`}
                           onClick={() => void reviewReport(report.id, "dismissed")}
                           type="button"
@@ -1083,7 +1084,7 @@ function LobbyView({
                           {clubMutating === `report:${report.id}:dismissed` ? "Dismissing…" : "Dismiss"}
                         </button>
                         <button
-                          className="ls-primary-button"
+                          className="ls-primary-button ls-button-press"
                           disabled={clubMutating === `report:${report.id}:resolved`}
                           onClick={() => void reviewReport(report.id, "resolved")}
                           type="button"
@@ -1202,7 +1203,7 @@ function LobbyView({
 
               <div className="ls-card-actions">
                 <button
-                  className="ls-secondary-button"
+                  className="ls-secondary-button ls-button-press"
                   onClick={(event) => {
                     event.stopPropagation();
                     onSelect(table);
@@ -1213,7 +1214,7 @@ function LobbyView({
                 </button>
 
                 <button
-                  className="ls-primary-button"
+                  className="ls-primary-button ls-button-press"
                   disabled={Boolean(seatedTableId) || isFull || table.status === "in_game"}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1385,19 +1386,26 @@ function getHandState(table: PokerTable, user: UniversalUser): HandState {
   const boardCards = (table.board || []).map(parseCard);
   const heroHoleCards = heroSeat?.holeCards ? heroSeat.holeCards.map(parseCard) : [];
 
-  let dealerSeatNumber = 1;
-  let smallBlindSeatNumber = 1;
-  let bigBlindSeatNumber = 2;
-
   const activeSeats = table.seats.filter(s => s.user);
-  if (activeSeats.length > 2) {
-    dealerSeatNumber = activeSeats[0].seatNumber;
-    smallBlindSeatNumber = activeSeats[1].seatNumber;
-    bigBlindSeatNumber = activeSeats[2].seatNumber;
-  } else if (activeSeats.length === 2) {
-    dealerSeatNumber = activeSeats[0].seatNumber;
-    smallBlindSeatNumber = activeSeats[0].seatNumber;
-    bigBlindSeatNumber = activeSeats[1].seatNumber;
+  const dealerSeatIndex =
+    typeof table.dealerSeatIndex === "number" ? table.dealerSeatIndex : 0;
+
+  // Compute blind positions relative to the persisted dealer button.
+  const getRelativeSeat = (offset: number) =>
+    activeSeats[(dealerSeatIndex + offset) % activeSeats.length];
+
+  let dealerSeatNumber = activeSeats[dealerSeatIndex]?.seatNumber ?? 1;
+  let smallBlindSeatNumber = activeSeats.length > 0
+    ? getRelativeSeat(1)?.seatNumber ?? 1
+    : 1;
+  let bigBlindSeatNumber = activeSeats.length > 0
+    ? getRelativeSeat(2)?.seatNumber ?? 2
+    : 2;
+
+  if (activeSeats.length === 2) {
+    // Heads-up: dealer is the small blind.
+    smallBlindSeatNumber = dealerSeatNumber;
+    bigBlindSeatNumber = getRelativeSeat(1)?.seatNumber ?? bigBlindSeatNumber;
   }
 
   const currentTurnSeat = table.seats.find(s => s.user?.fid === table.currentTurnFid);
@@ -1495,6 +1503,7 @@ function ActionTableView({
   onLeave,
   onReady,
   onGameAction,
+  onDealNextHand,
 }: {
   table: PokerTable;
   user: UniversalUser;
@@ -1502,6 +1511,7 @@ function ActionTableView({
   onLeave: () => void;
   onReady: () => void;
   onGameAction: (action: string, amount?: number) => void;
+  onDealNextHand: () => void;
 }) {
   const hand = getHandState(table, user);
 
@@ -1519,13 +1529,13 @@ function ActionTableView({
     hand.currentTurnSeatNumber === currentSeat?.seatNumber;
 
   const heroIsSeated = Boolean(currentSeat);
-  const tableIsActive = table.status === "in_game" || table.status === "seated";
+  const tableIsActive = table.status === "in_game";
   const canAct = heroIsSeated && tableIsActive && isHeroTurn;
 
   const visiblePlayers = table.seats.filter((seat) => seat.user);
 
   function submitAction(action: string) {
-    if (!canAct && action !== "check") return;
+    if (!canAct) return;
 
     const amount =
       action === "bet" || action === "raise"
@@ -1543,7 +1553,7 @@ function ActionTableView({
         <div className="ls-play-top-actions">
           {!currentSeat && (
             <button
-              className="ls-primary-button"
+              className="ls-primary-button ls-button-press"
               onClick={onJoin}
               disabled={isFull || table.status === "in_game"}
             >
@@ -1561,6 +1571,12 @@ function ActionTableView({
                 Leave
               </button>
             </>
+          )}
+
+          {hand.street === "showdown" && currentSeat && (
+            <button className="ls-primary-button" onClick={onDealNextHand}>
+              Deal Next Hand
+            </button>
           )}
         </div>
       </div>
@@ -1645,7 +1661,7 @@ function BoardCards({ cards }: { cards: PlayingCard[] }) {
   return (
     <div className="ls-board-cards">
       {cards.map((card, index) => (
-        <CardFace key={`${card.rank}-${card.suit}-${index}`} card={card} size="board" />
+        <CardFace key={`${card.rank}-${card.suit}-${index}`} card={card} size="board" index={index} />
       ))}
 
       {Array.from({ length: emptySlots }).map((_, index) => (
@@ -1668,7 +1684,7 @@ function HeroHoleCards({
     <div className={isHeroTurn ? "ls-hero-hand active" : "ls-hero-hand"}>
       <div className="ls-hole-card-row">
         {cards.map((card, index) => (
-          <CardFace key={`${card.rank}-${card.suit}-${index}`} card={card} size="hole" />
+          <CardFace key={`${card.rank}-${card.suit}-${index}`} card={card} size="hole" index={index} />
         ))}
       </div>
     </div>
@@ -1678,12 +1694,15 @@ function HeroHoleCards({
 function CardFace({
   card,
   size,
+  index = 0,
 }: {
   card: PlayingCard;
   size: "board" | "hole";
+  index?: number;
 }) {
+  const delayClass = index > 0 && index <= 5 ? `ls-deal-delay-${index}` : "";
   return (
-    <div className={`ls-card-face ${size} ${getCardColor(card)}`}>
+    <div className={`ls-card-face ${size} ${getCardColor(card)} ls-card-deal ${delayClass}`}>
       <b>{card.rank}</b>
       <span>{card.suit}</span>
     </div>

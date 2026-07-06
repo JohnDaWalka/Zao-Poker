@@ -1,6 +1,7 @@
-// Standalone 5/6/7-card Texas Hold'em hand evaluator. Cards use this app's
+// Standalone 5/6/7-card poker hand evaluator. Cards use this app's
 // existing string format (e.g. "Ah", "Td" — rank then lowercase suit).
 // No external dependency.
+// Supports high hands, low hands (8-or-better), and Omaha-8 / Stud-8 showdowns.
 
 export type Card = string;
 
@@ -15,15 +16,15 @@ const RANK_VALUES: Record<string, number> = {
 export type HandRank = number[];
 const HIGH_CARD_RANK = 0;
 
-function rankValue(card: Card): number {
+export function rankValue(card: Card): number {
   return RANK_VALUES[card[0]] ?? 0;
 }
 
-function suitOf(card: Card): string {
+export function suitOf(card: Card): string {
   return card[1];
 }
 
-function combinations<T>(items: T[], size: number): T[][] {
+export function combinations<T>(items: T[], size: number): T[][] {
   if (size === 0) return [[]];
   if (items.length < size) return [];
   const [first, ...rest] = items;
@@ -32,7 +33,7 @@ function combinations<T>(items: T[], size: number): T[][] {
   return [...withFirst, ...withoutFirst];
 }
 
-function evaluateFiveCardHand(cards: Card[]): HandRank {
+export function evaluateFiveCardHand(cards: Card[]): HandRank {
   const values = cards.map(rankValue).sort((a, b) => b - a);
   const suits = cards.map(suitOf);
   const isFlush = suits.every((suit) => suit === suits[0]);
@@ -68,34 +69,185 @@ function evaluateFiveCardHand(cards: Card[]): HandRank {
   return [0, ...values];
 }
 
-export function rankShowdownWinners(
-  players: { holeCards: Card[] }[],
-  board: Card[]
-): number[] {
-  const bestRanks: HandRank[] = [];
-  let bestRank: HandRank = [-1];
-
-  for (const p of players) {
-    const allCards = [...p.holeCards, ...board];
-    let bestForPlayer: HandRank = [HIGH_CARD_RANK];
-    for (const combo of combinations(allCards, 5)) {
-      const r = evaluateFiveCardHand(combo);
-      if (compareHandRanks(r, bestForPlayer) > 0) bestForPlayer = r;
-    }
-    bestRanks.push(bestForPlayer);
-    if (compareHandRanks(bestForPlayer, bestRank) > 0) bestRank = bestForPlayer;
-  }
-
-  return bestRanks
-    .map((r, i) => (compareHandRanks(r, bestRank) === 0 ? i : -1))
-    .filter((i) => i !== -1);
-}
-
-function compareHandRanks(a: HandRank, b: HandRank): number {
+export function compareHandRanks(a: HandRank, b: HandRank): number {
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
     const av = a[i] ?? 0;
     const bv = b[i] ?? 0;
     if (av !== bv) return av - bv;
   }
   return 0;
+}
+
+/** Best 5-card hand out of all combinations of hole cards + board. */
+export function bestHandRank(holeCards: Card[], board: Card[]): HandRank {
+  const allCards = [...holeCards, ...board].filter(Boolean);
+  if (allCards.length < 5) {
+    const values = allCards.map(rankValue).sort((a, b) => b - a);
+    return [HIGH_CARD_RANK, ...values];
+  }
+
+  let best: HandRank | null = null;
+  for (const combo of combinations(allCards, 5)) {
+    const rank = evaluateFiveCardHand(combo);
+    if (!best || compareHandRanks(rank, best) > 0) best = rank;
+  }
+  return best as HandRank;
+}
+
+/** Ranks each player's best hand and returns the indices of the winner(s)
+ * (a tie/split pot returns more than one index). */
+export function rankShowdownWinners(
+  players: { holeCards: Card[] }[],
+  board: Card[]
+): number[] {
+  const ranks = players.map((player) => bestHandRank(player.holeCards, board));
+  let bestRank = ranks[0];
+  for (const rank of ranks) {
+    if (compareHandRanks(rank, bestRank) > 0) bestRank = rank;
+  }
+  return ranks
+    .map((rank, index) => (compareHandRanks(rank, bestRank) === 0 ? index : -1))
+    .filter((index) => index !== -1);
+}
+
+/* ──────────────────── LOW HAND EVALUATION ──────────────────── */
+
+/** Determine if a 5-card hand qualifies as a low hand (8-or-better, no pairs).
+ *  Returns the low hand rank (lower = better; A-2-3-4-5 is best) or null if not qualifying.
+ *  Ace counts as 1 for low. */
+export function getLowHandRank(cards: Card[]): number[] | null {
+  if (cards.length < 5) return null;
+  const values = cards.map(rankValue);
+  const unpaired = Array.from(new Set(values));
+  if (unpaired.length < 5) return null; // must have 5 distinct ranks
+
+  const sorted = unpaired.sort((a, b) => a - b); // ascending
+  if (sorted[sorted.length - 1] > 8) return null; // 8-or-better (A=14, so 8 is max)
+
+  // Best low is the 5 lowest distinct cards
+  const lowFive = sorted.slice(0, 5);
+  // Ace should be 1 for low evaluation, but since we already sorted ascending
+  // and A=14 is the largest, it won't be in the low set unless it's the only
+  // way to get 5 cards. Actually A=14 > 8, so it would fail the 8-or-better check.
+  // Wait, A=14 is > 8, so it would fail... but in poker, A counts as 1 for low!
+  // We need to treat A as 1 for low evaluation.
+
+  // Re-evaluate with A=1
+  const lowValues = cards.map((c) => (c[0] === "A" ? 1 : rankValue(c)));
+  const lowUnpaired = Array.from(new Set(lowValues));
+  if (lowUnpaired.length < 5) return null;
+  const lowSorted = lowUnpaired.sort((a, b) => a - b);
+  if (lowSorted[lowSorted.length - 1] > 8) return null;
+  return lowSorted.slice(0, 5);
+}
+
+/** Compare low hands: lower lexicographically wins. Returns negative if a < b. */
+export function compareLowHandRanks(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const diff = a[i] - b[i];
+    if (diff !== 0) return diff;
+  }
+  return a.length - b.length;
+}
+
+/* ──────────────────── OMAHA-8 SPECIFIC ──────────────────── */
+
+export interface Omaha8Result {
+  high: HandRank;
+  low: number[] | null;
+}
+
+/** For Omaha-8: must use exactly 2 hole cards + 3 board cards for both high and low. */
+export function getBestOmaha8Hand(holeCards: Card[], board: Card[]): Omaha8Result {
+  const holeCombos = combinations(holeCards, 2);
+  const boardCombos = combinations(board, 3);
+
+  let bestHigh: HandRank | null = null;
+  let bestLow: number[] | null = null;
+
+  for (const h of holeCombos) {
+    for (const b of boardCombos) {
+      const high = bestHandRank(h, b);
+      if (!bestHigh || compareHandRanks(high, bestHigh) > 0) {
+        bestHigh = high;
+      }
+      const all = [...h, ...b];
+      const low = getLowHandRank(all);
+      if (low) {
+        if (!bestLow || compareLowHandRanks(low, bestLow) < 0) {
+          bestLow = low;
+        }
+      }
+    }
+  }
+
+  return { high: bestHigh!, low: bestLow };
+}
+
+/* ──────────────────── HIGH-LOW SHOWDOWN ──────────────────── */
+
+export interface ShowdownPlayer {
+  fid: number;
+  username: string;
+  holeCards: Card[];
+  invested: number;
+}
+
+export interface HighLowResult {
+  highWinners: number[];
+  lowWinners: number[];
+}
+
+/** Rank players for a high-low showdown.
+ *  If no qualifying low, lowWinners is empty (high scoops). */
+export function rankHighLowShowdown(
+  players: ShowdownPlayer[],
+  board: Card[],
+  variant: "O8B" | "STUD8"
+): HighLowResult {
+  const highRanks: { fid: number; rank: HandRank }[] = [];
+  const lowRanks: { fid: number; rank: number[] }[] = [];
+
+  for (const p of players) {
+    let high: HandRank;
+    let low: number[] | null = null;
+
+    if (variant === "O8B") {
+      const result = getBestOmaha8Hand(p.holeCards, board);
+      high = result.high;
+      low = result.low;
+    } else {
+      // STUD8: best 5 from 7 for high, best 5 from 7 for low
+      high = bestHandRank(p.holeCards, []);
+      low = getLowHandRank(p.holeCards);
+    }
+
+    highRanks.push({ fid: p.fid, rank: high });
+    if (low) {
+      lowRanks.push({ fid: p.fid, rank: low });
+    }
+  }
+
+  // Find best high
+  let bestHigh = highRanks[0]?.rank;
+  for (const h of highRanks) {
+    if (compareHandRanks(h.rank, bestHigh) > 0) bestHigh = h.rank;
+  }
+  const highWinners = highRanks
+    .filter((h) => compareHandRanks(h.rank, bestHigh) === 0)
+    .map((h) => h.fid);
+
+  // Find best low
+  let lowWinners: number[] = [];
+  if (lowRanks.length > 0) {
+    let bestLow = lowRanks[0].rank;
+    for (const l of lowRanks) {
+      if (compareLowHandRanks(l.rank, bestLow) < 0) bestLow = l.rank;
+    }
+    lowWinners = lowRanks
+      .filter((l) => compareLowHandRanks(l.rank, bestLow) === 0)
+      .map((l) => l.fid);
+  }
+
+  return { highWinners, lowWinners };
 }

@@ -1,4 +1,4 @@
-export type GameType = "NLHE" | "PLO" | "PLO8" | "STUD8";
+export type GameType = "NLHE" | "PLO" | "O8B" | "STUD" | "STUD8";
 export type TableStatus = "waiting" | "seated" | "full" | "in_game";
 
 export interface UniversalUser {
@@ -19,6 +19,7 @@ export interface Seat {
   isReady: boolean;
   isBot: boolean;
   holeCards: string[];
+  visibleCards?: string[]; // face-up cards for stud variants
   status?: string;
   hasActed?: boolean;
 }
@@ -42,6 +43,7 @@ export interface PokerTable {
   phase: string;
   actionHistory: string[];
   currentTurnFid: number | null;
+  dealerSeatIndex?: number;
   seats: Seat[];
 }
 

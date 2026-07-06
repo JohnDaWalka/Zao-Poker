@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPublicEnv } from "~/lib/env";
 import type { UniversalUser } from "~/types/universal";
-import type { PokerTable, LobbyState, Seat } from "@zao-poker/core";
 
 export type GameType = "NLHE" | "PLO" | "PLO8" | "STUD8";
 export type TableStatus = "waiting" | "seated" | "full" | "in_game";
@@ -40,6 +39,7 @@ export type PokerTable = {
   phase: string;
   actionHistory: string[];
   currentTurnFid: number | null;
+  dealerSeatIndex?: number;
   seats: Seat[];
   currentBlinds?: { sb: number; bb: number; ante: number };
 };
@@ -73,6 +73,7 @@ type CurrentApiLobbyTable = {
   phase?: string;
   action_history?: string;
   current_turn_fid?: number | null;
+  dealer_seat_index?: number | null;
 };
 
 type CurrentApiPlayer = {
@@ -192,6 +193,9 @@ function mapCurrentApiTable(
     currentTurnFid: Number.isSafeInteger(Number(table.current_turn_fid))
       ? Number(table.current_turn_fid)
       : null,
+    dealerSeatIndex: Number.isSafeInteger(Number(table.dealer_seat_index))
+      ? Number(table.dealer_seat_index)
+      : 0,
     seats: seatDefaults,
     currentBlinds: (table as any).current_blinds ? {
       sb: Number((table as any).current_blinds.sb),

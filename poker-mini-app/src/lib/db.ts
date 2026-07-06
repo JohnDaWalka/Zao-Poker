@@ -62,28 +62,74 @@ async function initializeDb() {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       current_turn_fid INTEGER,
       last_aggressor_fid INTEGER,
+      dealer_seat_index INTEGER DEFAULT 0,
       turn_started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
+  // ── Migration: players PK was originally `fid INTEGER PRIMARY KEY` which
+  // prevented multi-tabling. Recreate with composite PK if necessary.
+  const { rows: pkInfo } = await db.execute(`PRAGMA table_info(players)`);
+  const hasCompositePk = pkInfo.some((row: any) => String(row.name) === "table_id" && Number(row.pk) > 0);
+  if (!hasCompositePk) {
+    // SQLite doesn't allow ALTER TABLE for PK changes; recreate with temp table.
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS players_new (
+        fid INTEGER NOT NULL,
+        username TEXT,
+        pfp_url TEXT,
+        table_id TEXT NOT NULL,
+        seat_index INTEGER,
+        stack_size INTEGER DEFAULT 5000,
+        hand TEXT DEFAULT '',
+        current_bet INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'waiting',
+        is_bot INTEGER DEFAULT 0,
+        is_ready INTEGER DEFAULT 0,
+        has_acted INTEGER DEFAULT 0,
+        total_invested INTEGER DEFAULT 0,
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+        visible_cards TEXT DEFAULT '',
+        PRIMARY KEY (fid, table_id)
+      )
+    `);
+    await db.execute(`
+      INSERT OR IGNORE INTO players_new (
+        fid, username, pfp_url, table_id, seat_index, stack_size, hand,
+        current_bet, status, is_bot, is_ready, has_acted, total_invested,
+        joined_at, last_seen, visible_cards
+      )
+      SELECT
+        fid, username, pfp_url, table_id, seat_index, stack_size, hand,
+        current_bet, status, is_bot, is_ready, has_acted, total_invested,
+        joined_at, last_seen, visible_cards
+      FROM players
+    `);
+    await db.execute(`DROP TABLE IF EXISTS players`);
+    await db.execute(`ALTER TABLE players_new RENAME TO players`);
+  }
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS players (
-      fid INTEGER PRIMARY KEY,
+      fid INTEGER NOT NULL,
       username TEXT,
       pfp_url TEXT,
-      table_id TEXT,
+      table_id TEXT NOT NULL,
       seat_index INTEGER,
       stack_size INTEGER DEFAULT 5000,
       hand TEXT DEFAULT '',
       current_bet INTEGER DEFAULT 0,
-      status TEXT DEFAULT 'waiting', -- 'waiting', 'playing', 'folded', 'sitting_out'
+      status TEXT DEFAULT 'waiting',
       is_bot INTEGER DEFAULT 0,
       is_ready INTEGER DEFAULT 0,
       has_acted INTEGER DEFAULT 0,
       total_invested INTEGER DEFAULT 0,
       joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      visible_cards TEXT DEFAULT '',
+      PRIMARY KEY (fid, table_id)
     )
   `);
 
@@ -213,6 +259,7 @@ async function initializeDb() {
     created_at: "DATETIME",
     current_turn_fid: "INTEGER",
     last_aggressor_fid: "INTEGER",
+    dealer_seat_index: "INTEGER DEFAULT 0",
     turn_started_at: "DATETIME",
     updated_at: "DATETIME",
   });
@@ -228,6 +275,8 @@ async function initializeDb() {
     // bet/call/raise/all-in), reset at the start of each new hand. Used to
     // compute each player's net win/loss for hand_history / player_stats.
     total_invested: "INTEGER DEFAULT 0",
+    // Face-up (visible) cards for stud variants. Comma-separated card strings.
+    visible_cards: "TEXT DEFAULT ''",
   });
 
   await addMissingColumns("table_chat_reports", {
