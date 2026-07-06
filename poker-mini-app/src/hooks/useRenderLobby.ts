@@ -32,6 +32,7 @@ export type PokerTable = {
   clubName: string | null;
   status: TableStatus;
   createdAt: number;
+  serverUpdatedAt?: number;
   startTime?: string | null;
   board: string[];
   potSize: number;
@@ -66,6 +67,7 @@ type CurrentApiLobbyTable = {
   status: "waiting" | "playing" | "finished";
   normalized_status?: TableStatus;
   created_at?: string | null;
+  updated_at?: string | null;
   start_time?: string | null;
   board?: string;
   pot_size?: number;
@@ -184,6 +186,9 @@ function mapCurrentApiTable(
       : table.start_time
         ? new Date(table.start_time).getTime()
         : Date.now(),
+    serverUpdatedAt: table.updated_at
+      ? new Date(table.updated_at).getTime()
+      : undefined,
     startTime: table.start_time ?? null,
     board: String(table.board || "").split(",").filter(Boolean),
     potSize: Number(table.pot_size || 0),
@@ -242,6 +247,16 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       const merged = tables.map((incoming) => {
         const existing = current.tables.find((t) => t.id === incoming.id);
         if (!existing) return incoming;
+
+        // CRITICAL: Time-based ordering. Never overwrite newer server data with older data.
+        // This prevents race conditions where a stale GET response arrives after a fresh POST action.
+        if (
+          existing.serverUpdatedAt &&
+          incoming.serverUpdatedAt &&
+          incoming.serverUpdatedAt < existing.serverUpdatedAt
+        ) {
+          return existing;
+        }
 
         const incomingSeated = incoming.seats.filter((s) => s.user).length;
         const existingSeated = existing.seats.filter((s) => s.user).length;
@@ -335,6 +350,17 @@ export function useRenderLobby(currentUser?: UniversalUser) {
             tables: [mappedTable, ...current.tables],
             updatedAt: Date.now(),
           };
+        }
+
+        const existing = current.tables[existingIndex];
+
+        // CRITICAL: Time-based ordering. Never overwrite newer server data with older data.
+        if (
+          existing.serverUpdatedAt &&
+          mappedTable.serverUpdatedAt &&
+          mappedTable.serverUpdatedAt < existing.serverUpdatedAt
+        ) {
+          return current;
         }
 
         const nextTables = [...current.tables];
