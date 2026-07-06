@@ -41,12 +41,9 @@ jobs:
             exit 1
           fi
 
-      - name: Link Vercel project
+      - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx vercel link --yes --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN"
-
-      - name: Deploy production build
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: npx vercel deploy --prod --yes --force --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN"
+        run: |
+          echo "Deploying poker-mini-app to Vercel (scope: wecrypto, project: poker-mini-app)..."
+          npx vercel deploy --prod --yes --force --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN"
