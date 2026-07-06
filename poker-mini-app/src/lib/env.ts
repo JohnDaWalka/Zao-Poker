@@ -1,8 +1,6 @@
 // Centralized env validation for the Zao Poker mini app.
 // Warns (never throws) so a missing var degrades a feature, not the whole app.
 
-// and a missing var (e.g. a newly-added one not yet set in Vercel) must
-// degrade a feature, not crash the whole mini app.
 function warnIfMissing(scope: string, vars: Record<string, string | undefined>) {
   if (process.env.NODE_ENV !== "production") return;
 
@@ -49,13 +47,7 @@ export function getPublicEnv() {
     hasRenderLobby: Boolean(
       vars.NEXT_PUBLIC_RENDER_API_URL && vars.NEXT_PUBLIC_RENDER_WS_URL
     ),
-    // Empty string (rather than undefined) lets callers do a simple truthy
-    // check to decide whether the WalletConnect connector can be enabled.
     walletConnectProjectId: vars.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "",
-    // All three below are optional opt-ins for the Privy/ZeroDev smart
-    // account path. Email/social login is disabled until an app ID is set;
-    // gas sponsorship is disabled until a paymaster RPC is set (configure
-    // spending limits in the ZeroDev dashboard before enabling it).
     privyAppId: vars.NEXT_PUBLIC_PRIVY_APP_ID ?? "",
     zeroDevBundlerRpc: vars.NEXT_PUBLIC_ZERODEV_BUNDLER_RPC ?? "",
     zeroDevPaymasterRpc: vars.NEXT_PUBLIC_ZERODEV_PAYMASTER_RPC ?? "",
@@ -92,6 +84,3 @@ export function getServerEnv() {
     neynarApiKey: vars.NEYNAR_API_KEY,
   };
 }
-// deploy-trigger
-// deploy: VERCEL_TOKEN should be live
-// deploy: testing VERCEL_TOKEN

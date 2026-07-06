@@ -306,10 +306,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       };
     });
 
-    setStatus("connected");
-    setError(null);
-    setStatus("connected");
-    setError(null);
+    setStatus(connected);
     return true;
   }, [currentFid]);
 
