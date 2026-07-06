@@ -45,5 +45,9 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          echo "Deploying poker-mini-app to Vercel (scope: wecrypto, project: poker-mini-app)..."
-          npx vercel deploy --prod --yes --force --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN"
+          echo "=== Starting Vercel deploy ==="
+          npx vercel deploy --prod --yes --force --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN" --debug 2>&1 || {
+            echo ""
+            echo "=== DEPLOY FAILED — see debug output above ==="
+            exit 1
+          }
