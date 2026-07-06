@@ -19,10 +19,6 @@ jobs:
     permissions:
       contents: read
 
-    defaults:
-      run:
-        working-directory: poker-mini-app
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,22 +28,17 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Ensure Vercel token is configured
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          if [ -z "$VERCEL_TOKEN" ]; then
-            echo "::error::Missing VERCEL_TOKEN secret. Add it at the repository or organization level to enable Vercel deploys."
-            exit 1
-          fi
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Pull Vercel environment info
+        working-directory: poker-mini-app
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build project
+        working-directory: poker-mini-app
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy to Vercel
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          echo "=== Starting Vercel deploy ==="
-          npx vercel deploy --prod --yes --force --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN" --debug 2>&1 || {
-            echo ""
-            echo "=== DEPLOY FAILED — see debug output above ==="
-            exit 1
-          }
+        working-directory: poker-mini-app
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
