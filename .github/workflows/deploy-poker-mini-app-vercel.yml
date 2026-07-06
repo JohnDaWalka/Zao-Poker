@@ -44,4 +44,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           cd poker-mini-app
-          npx vercel deploy --prod --yes --token "$VERCEL_TOKEN"
+          # Pin Vercel CLI to a known stable version to avoid latest bugs
+          npm install -g vercel@37.0.0
+          echo "Deploying with Vercel CLI..."
+          vercel deploy --prod --yes --token "$VERCEL_TOKEN" 2>&1
