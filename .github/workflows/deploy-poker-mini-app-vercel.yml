@@ -53,5 +53,12 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           cd poker-mini-app
-          echo "Deploying with Vercel CLI..."
-          vercel deploy --prod --yes --token "$VERCEL_TOKEN" 2>&1
+          echo "Deploying with Vercel CLI (debug mode)..."
+          vercel deploy --prod --yes --token "$VERCEL_TOKEN" --debug 2>&1 | tee deploy.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "=== DEPLOY FAILED ==="
+            echo "Last 50 lines of output:"
+            tail -n 50 deploy.log || true
+            exit $EXIT_CODE
+          fi
