@@ -1,0 +1,22 @@
+name: Diagnose Vercel link
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test Vercel token
+        run: |
+          echo "=== Testing Vercel CLI connection ==="
+          npx vercel whoami --token "${{ secrets.VERCEL_TOKEN }}" || echo "whoami failed"
+          echo ""
+          echo "=== Attempting to link project ==="
+          cd poker-mini-app
+          npx vercel link --yes --scope wecrypto --project poker-mini-app --token "${{ secrets.VERCEL_TOKEN }}" || echo "link failed"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
