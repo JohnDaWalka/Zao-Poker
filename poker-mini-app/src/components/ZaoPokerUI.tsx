@@ -1627,6 +1627,61 @@ function ActionTableView({
 
   const visiblePlayers = table.seats.filter((seat) => seat.user);
 
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [coachResult, setCoachResult] = useState<{
+    analysis: string;
+    tags: string[];
+    confidence: number;
+    winRate: number;
+    tieRate: number;
+    loseRate: number;
+  } | null>(null);
+
+  async function fetchCoach() {
+    if (!currentSeat || hand.heroHoleCards.length === 0) return;
+
+    setCoachLoading(true);
+    setCoachResult(null);
+
+    try {
+      const heroCards = hand.heroHoleCards.map((c) => c.rank + c.suit);
+      const boardCards = hand.boardCards.map((c) => c.rank + c.suit);
+      const cards = [...heroCards, ...boardCards];
+
+      const res = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fid: user.fid,
+          action: "evaluate",
+          amount: 0,
+          pot_size: hand.pot,
+          stack_size: currentSeat.stack,
+          cards,
+          variant: table.game === "NLHE" ? "Texas Holdem No-Limit" : table.game,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setCoachResult({
+            analysis: data.analysis,
+            tags: data.tags || [],
+            confidence: data.confidence,
+            winRate: data.gto?.winRate ?? 0,
+            tieRate: data.gto?.tieRate ?? 0,
+            loseRate: data.gto?.loseRate ?? 0,
+          });
+        }
+      }
+    } catch {
+      // Ignore
+    } finally {
+      setCoachLoading(false);
+    }
+  }
+
   function submitAction(action: "fold" | "check" | "call" | "bet" | "raise" | "all_in") {
     if (!canAct) return;
 
@@ -1755,6 +1810,79 @@ function ActionTableView({
           <section className="ls-play-panel">
             <ActionLog items={hand.actionLog} />
           </section>
+
+          {heroIsSeated && tableIsActive && hand.heroHoleCards.length > 0 && (
+            <section className="ls-play-panel" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <button
+                className="ls-primary-button"
+                onClick={fetchCoach}
+                disabled={coachLoading}
+                style={{
+                  fontSize: "0.8rem",
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "6px",
+                }}
+              >
+                {coachLoading ? (
+                  <>
+                    <span style={{ animation: "spin 1s linear infinite" }}>⟳</span>
+                    Analyzing...
+                  </>
+                ) : (
+                  "🧠 Get AI Coach"
+                )}
+              </button>
+
+              {coachResult && (
+                <div
+                  style={{
+                    background: "#0f172a",
+                    border: "1px solid #334155",
+                    borderRadius: "8px",
+                    padding: "10px 12px",
+                    fontSize: "0.75rem",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
+                    <span
+                      style={{
+                        fontSize: "0.65rem",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.03em",
+                        padding: "1px 6px",
+                        borderRadius: "999px",
+                        backgroundColor: coachResult.winRate > 0.55 ? "#d1fae5" : coachResult.winRate > 0.35 ? "#fef3c7" : "#fee2e2",
+                        color: coachResult.winRate > 0.55 ? "#059669" : coachResult.winRate > 0.35 ? "#d97706" : "#dc2626",
+                      }}
+                    >
+                      {(coachResult.winRate * 100).toFixed(1)}% Equity
+                    </span>
+                    {coachResult.tags.slice(0, 3).map((tag) => (
+                      <span
+                        key={tag}
+                        style={{
+                          fontSize: "0.6rem",
+                          color: "#94a3b8",
+                          background: "#1e293b",
+                          padding: "1px 5px",
+                          borderRadius: "4px",
+                        }}
+                      >
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                  <p style={{ color: "#e2e8f0", margin: 0 }}>{coachResult.analysis}</p>
+                </div>
+              )}
+            </section>
+          )}
 
           <section className="ls-play-panel">
             <div className="ls-hand-info-grid">

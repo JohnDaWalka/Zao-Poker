@@ -143,6 +143,8 @@ function buildCoachPrompt(params: {
   const potOdds = pot_size > 0 ? amount / (pot_size + amount) : 0;
   const street = boardCards.length === 0 ? "preflop" : boardCards.length === 3 ? "flop" : boardCards.length === 4 ? "turn" : "river";
 
+  const isEvaluate = action === "evaluate";
+
   return `You are an elite poker coach analyzing a hand for a player.
 
 HAND CONTEXT:
@@ -150,17 +152,16 @@ HAND CONTEXT:
 - Street: ${street}
 - Hero cards: ${heroCards.join(" ")}
 - Board: ${boardCards.length > 0 ? boardCards.join(" ") : "(none yet)"}
-- Action taken: ${action}${amount > 0 ? ` $${amount}` : ""}
+${isEvaluate ? "- The player is evaluating their spot." : `- Action taken: ${action}${amount > 0 ? ` $${amount}` : ""}`}
 - Pot size: $${pot_size}
 - Stack remaining: $${stack_size}
 - Pot odds: ${(potOdds * 100).toFixed(1)}%
 - Monte Carlo equity vs random: ${(gto.winRate * 100).toFixed(1)}% win / ${(gto.tieRate * 100).toFixed(1)}% tie
 
 TASK:
-1. Analyze whether this action is +EV given the pot odds and equity.
-2. Identify any strategic mistakes or missed opportunities.
-3. Suggest what the optimal play would be in this spot.
-4. Provide 3-5 concise poker tags for this hand (e.g., #overbet, #value-bet, #bluff-catch).
+${isEvaluate
+  ? "1. Recommend the optimal action given the equity and pot odds.\n2. Explain why this action maximizes EV.\n3. Provide sizing recommendations if betting or raising.\n4. Provide 3-5 concise poker tags."
+  : "1. Analyze whether this action is +EV given the pot odds and equity.\n2. Identify any strategic mistakes or missed opportunities.\n3. Suggest what the optimal play would be in this spot.\n4. Provide 3-5 concise poker tags."}
 
 Keep your analysis under 200 words. Be direct and actionable.`;
 }
