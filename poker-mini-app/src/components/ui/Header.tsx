@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { APP_NAME } from "~/lib/constants";
-import sdk from "@farcaster/miniapp-sdk";
+import { sdk } from "@farcaster/miniapp-sdk";
 import { useMiniApp } from "@neynar/react";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
 import { ConnectWallet } from "~/components/ui/wallet/ConnectWallet";

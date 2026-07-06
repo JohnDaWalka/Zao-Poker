@@ -390,6 +390,10 @@ export async function dealNewHand(tableId: string, fids: number[]) {
     // Stud: ante already posted above. Deal 3rd street (2 down + 1 up).
     for (const player of seatedPlayers) {
       const fid = Number(player.fid);
+      if (deck.length < 3) {
+        // Not enough cards left in deck for all players
+        break;
+      }
       const c1 = deck.pop(); // down
       const c2 = deck.pop(); // down
       const c3 = deck.pop(); // up
@@ -919,6 +923,10 @@ async function playAutomatedTurn(tableId: string) {
     });
     await advanceGame(tableId, freshState[0]);
   } else {
+    if (rem.length === 0) {
+      // No remaining players, end the hand
+      return true;
+    }
     const oldAiIndex = remainingActive.findIndex((player: any) => Number(player.fid) === aiFid);
     // oldAiIndex is relative to the pre-fold active list; wrap it into the
     // post-fold list to find the player who acted immediately after the AI.
@@ -1624,6 +1632,17 @@ export async function POST(request: Request) {
         currentStatus === "waiting";
 
       if (canDeal) {
+        // Verify the requesting player is actually seated at this table
+        const { rows: requesterCheck } = await db.execute({
+          sql: "SELECT fid FROM players WHERE table_id = ? AND fid = ? LIMIT 1",
+          args: [effectiveTableId, fid]
+        });
+        if (requesterCheck.length === 0) {
+          return NextResponse.json(
+            { success: false, error: "You must be seated at the table to deal" },
+            { status: 403 }
+          );
+        }
         const { rows: players } = await db.execute({
           sql: "SELECT fid FROM players WHERE table_id = ? ORDER BY seat_index ASC",
           args: [effectiveTableId]
@@ -1666,7 +1685,7 @@ export async function POST(request: Request) {
           }
         }
       }
-    } else {
+    } else if (["check", "call", "bet", "raise", "all_in"].includes(action)) {
       // Process betting actions: check, call, bet, raise, all_in
       const { rows: stateRows } = await db.execute({
         sql: "SELECT * FROM tables WHERE id = ?",
@@ -1699,8 +1718,11 @@ export async function POST(request: Request) {
         } else if (action === "call") {
           betDiff = Math.min(newPlayerStack, Math.max(0, newTableBet - newPlayerBet));
         } else if (action === "bet" || action === "raise") {
-          // Validate: raise must be at least the current table bet + minimum raise
-          const minRaise = newTableBet + (newTableBet > 0 ? Math.max(1, newTableBet - Number(currentGameState.current_bet || 0)) : 1);
+          const currentBet = Number(currentGameState.current_bet || 0);
+          const lastRaiseAmount = Number(currentGameState.last_raise_amount || 0);
+          const bb = Number(currentGameState.big_blind || 1);
+          // Minimum raise: if no bet, min is bb; otherwise currentBet + lastRaiseAmount
+          const minRaise = currentBet > 0 ? currentBet + Math.max(bb, lastRaiseAmount) : bb;
           if (actionAmount < minRaise) {
             return NextResponse.json(
               { success: false, error: `Raise must be at least ${minRaise}` },

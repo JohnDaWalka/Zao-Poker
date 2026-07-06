@@ -252,6 +252,7 @@ async function initializeDb() {
   // Existing Turso databases predate the multiplayer columns. Migrate them
   // in place so a serverless cold start never deletes active tables or seats.
   await addMissingColumns("tables", {
+    last_raise_amount: "INTEGER DEFAULT 0",
     name: "TEXT",
     game_type: "TEXT DEFAULT 'NLHE'",
     stakes_label: "TEXT DEFAULT '$0.50 / $1'",

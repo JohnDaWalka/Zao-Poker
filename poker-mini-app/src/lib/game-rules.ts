@@ -351,7 +351,7 @@ function getMinBet(config: GameConfig, bb: number, phase: string): number {
   }
 }
 
-function getMaxBet(config: GameConfig, potSize: number, currentBet: number, playerStack: number, toCall: number): number {
+function getMaxBet(config: GameConfig, potSize: number, currentBet: number, playerStack: number, toCall: number, bb: number, phase: string): number {
   switch (config.bettingLimit) {
     case "NL":
       return playerStack + toCall;
@@ -362,7 +362,7 @@ function getMaxBet(config: GameConfig, potSize: number, currentBet: number, play
     }
     case "FL":
     case "FL-stud":
-      return getMinBet(config, 0, "");
+      return getMinBet(config, bb, phase);
     default:
       return playerStack + toCall;
   }

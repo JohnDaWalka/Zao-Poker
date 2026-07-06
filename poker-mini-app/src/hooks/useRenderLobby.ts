@@ -308,8 +308,10 @@ export function useRenderLobby(currentUser?: UniversalUser) {
 
     setStatus("connected");
     setError(null);
+    setStatus("connected");
+    setError(null);
     return true;
-  }, []);
+  }, [currentFid]);
 
   const mapTableDetail = useCallback((detail: CurrentApiTableDetailResponse) => {
     if (!detail.gameState) {
@@ -424,11 +426,12 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       return () => clearInterval(interval);
     }
 
-    cancelledRef.current = false;
-    reconnectTimerRef.current = null;
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function fetchFallback() {
       try {
+        if (!env.renderApiUrl) return;
         const response = await fetch(
           `${env.renderApiUrl.replace(/\/$/, "")}/lobby`,
           { cache: "no-store" }
@@ -437,7 +440,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         if (!response.ok) return;
 
         const data = (await response.json()) as LobbyState;
-        if (!cancelledRef.current && Array.isArray(data.tables)) {
+        if (!cancelled && Array.isArray(data.tables)) {
           setState(data);
         }
       } catch {
@@ -446,14 +449,14 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     }
 
     function connect() {
-      if (cancelledRef.current) return;
+      if (cancelled) return;
 
       setStatus("connecting");
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (cancelledRef.current) return;
+        if (cancelled) return;
         setStatus("connected");
         setError(null);
         ws.send(JSON.stringify({ type: "get_state" }));
@@ -498,14 +501,14 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       };
 
       ws.onclose = () => {
-        if (cancelledRef.current) return;
+        if (cancelled) return;
         setStatus("disconnected");
         void fetchFallback();
-        reconnectTimerRef.current = setTimeout(connect, 1500);
+        reconnectTimer = setTimeout(connect, 1500);
       };
 
       ws.onerror = () => {
-        if (cancelledRef.current) return;
+        if (cancelled) return;
         setStatus("disconnected");
         setError("Lobby socket connection failed.");
       };
@@ -514,10 +517,9 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     connect();
 
     return () => {
-      cancelledRef.current = true;
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
+      cancelled = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
       }
       wsRef.current?.close();
     };
@@ -791,6 +793,17 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     [applyTableDetail, send],
   );
 
+  const sendGameAction = useCallback(
+    (
+      tableId: string,
+      user: UniversalUser,
+      payload: { action: string; amount?: number },
+    ) => {
+      send({ type: "game_action", payload: { tableId, user, ...payload } });
+    },
+    [send],
+  );
+
   return {
     state,
     status,
@@ -808,12 +821,6 @@ export function useRenderLobby(currentUser?: UniversalUser) {
     takeTableAction,
     dealTableHand,
     refresh: refreshCurrentApiLobby,
-    sendGameAction: (
-      tableId: string,
-      user: UniversalUser,
-      payload: { action: string; amount?: number },
-    ) => {
-      send({ type: "game_action", payload: { tableId, user, ...payload } });
-    },
+    sendGameAction,
   };
 }
