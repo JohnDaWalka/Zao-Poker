@@ -22,7 +22,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           cd poker-mini-app
-          npx vercel link --yes --scope wecrypto --project poker-mini-app --token "$VERCEL_TOKEN"
+          npx vercel link --yes --project poker-mini-app --token "$VERCEL_TOKEN"
           npx vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
           npx vercel build --prod --token "$VERCEL_TOKEN"
           npx vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
