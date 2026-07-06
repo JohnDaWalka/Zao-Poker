@@ -214,7 +214,7 @@ deploy.
 
 - **Never assume a shared toolchain.** `poker-mini-app` uses npm,
   `poker-snap` uses pnpm, `LeakSnipe`/`AI-Poker-Coach`/`Poker-COACH`'s AoC
-  half use Python (`pip`/`uv`), `Poker-COACH`'s Vue half is its own npm
+  half uses Python (`pip`/`uv`), `Poker-COACH`'s Vue half is its own npm
   project. Always check the specific subproject's lockfile/config before
   picking a package manager.
 - **Secrets**: never commit `.env*`, `env.yaml`, or files under `Secrets/` —
