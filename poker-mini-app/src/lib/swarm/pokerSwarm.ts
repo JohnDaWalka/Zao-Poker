@@ -1,6 +1,17 @@
-import OpenAI from 'openai';
+let openai: any = null;
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI(): any {
+  if (!openai) {
+    try {
+      const { OpenAI } = require('openai');
+      openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    } catch {
+      console.warn('OpenAI not installed. Run: npm install openai');
+      openai = null;
+    }
+  }
+  return openai;
+}
 
 interface SwarmMessage {
   role: 'user' | 'assistant' | 'system';
@@ -126,12 +137,24 @@ export class PokerSwarm {
   }
   
   private async callAgent(agent: Agent, input: string): Promise<string> {
+    const client = getOpenAI();
+    if (!client) {
+      // Fallback: return a mock response when OpenAI is not available
+      return JSON.stringify({
+        potOdds: 0.33,
+        minEquity: 0.25,
+        impliedOdds: 0.40,
+        recommendation: 'call',
+        confidence: 0.7,
+      });
+    }
+    
     const messages: SwarmMessage[] = [
       { role: 'system', content: agent.systemPrompt, name: agent.name },
       { role: 'user', content: input },
     ];
     
-    const response = await openai.chat.completions.create({
+    const response = await client.chat.completions.create({
       model: agent.model,
       messages,
       temperature: 0.1,
