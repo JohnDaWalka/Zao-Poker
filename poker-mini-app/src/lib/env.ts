@@ -62,9 +62,18 @@ export function getPublicEnv() {
  */
 export function getApiUrl(path: string): string {
   const env = getPublicEnv();
-  const baseUrl = env.hasRenderLobby
-    ? env.renderApiUrl.replace(/\/$/, "")
-    : env.appUrl.replace(/\/$/, "");
+  
+  if (env.hasRenderLobby) {
+    const baseUrl = env.renderApiUrl.replace(/\/$/, "");
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    return `${baseUrl}${cleanPath}`;
+  }
+  
+  if (typeof window !== "undefined") {
+    return path.startsWith("/") ? path : `/${path}`;
+  }
+  
+  const baseUrl = env.appUrl.replace(/\/$/, "");
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
   return `${baseUrl}${cleanPath}`;
 }

@@ -7,6 +7,7 @@ export default [
   ...nextVitals,
   ...nextTypeScript,
   {
+    files: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
     rules: {
       "@next/next/no-img-element": "off",
       "@typescript-eslint/ban-ts-comment": "off",

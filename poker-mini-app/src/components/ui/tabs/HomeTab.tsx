@@ -27,6 +27,8 @@ interface TableData {
   status: "waiting" | "playing" | "finished";
   player_count: number;
   start_time: string;
+  game_type?: string;
+  stakes_label?: string;
 }
 
 export function HomeTab() {
@@ -44,6 +46,9 @@ export function HomeTab() {
   const [lobbyTables, setLobbyTables] = useState<TableData[]>([]);
   const [joinError, setJoinError] = useState<string>("");
   const [joiningTableId, setJoiningTableId] = useState<string | null>(null);
+  const [lobbySearch, setLobbySearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [gameFilter, setGameFilter] = useState<string>("all");
 
   // Active table states
   const [tableStatus, setTableStatus] = useState<string>("waiting");
@@ -355,6 +360,20 @@ export function HomeTab() {
     </>
   );
 
+  const filteredTables = lobbyTables.filter((table) => {
+    const matchesSearch =
+      lobbySearch.trim().length === 0 ||
+      table.name.toLowerCase().includes(lobbySearch.trim().toLowerCase()) ||
+      (table.stakes_label ?? "").toLowerCase().includes(lobbySearch.trim().toLowerCase());
+    const matchesStatus =
+      statusFilter === "all" ||
+      table.status === statusFilter;
+    const matchesGame =
+      gameFilter === "all" ||
+      (table.game_type ?? "NLHE") === gameFilter;
+    return matchesSearch && matchesStatus && matchesGame;
+  });
+
   // LOBBY VIEW
   if (gameState === "lobby") {
     return (
@@ -373,15 +392,61 @@ export function HomeTab() {
               {joinError}
             </div>
           )}
-          {lobbyTables.length === 0 ? (
-            <div className="text-center text-gray-500 py-10">Loading active tournaments...</div>
+
+          {/* Filter Controls */}
+          <div className="bg-surface-light border border-primary/10 rounded-xl p-4 space-y-3 shadow-lg">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Search</label>
+              <input
+                type="text"
+                placeholder="Table name or stakes..."
+                value={lobbySearch}
+                onChange={(e) => setLobbySearch(e.target.value)}
+                className="w-full bg-surface-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-light transition-colors"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="w-full bg-surface-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-light transition-colors"
+                >
+                  <option value="all">All Statuses</option>
+                  <option value="waiting">Waiting</option>
+                  <option value="playing">Playing</option>
+                  <option value="finished">Finished</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Game</label>
+                <select
+                  value={gameFilter}
+                  onChange={(e) => setGameFilter(e.target.value)}
+                  className="w-full bg-surface-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-light transition-colors"
+                >
+                  <option value="all">All Games</option>
+                  <option value="NLHE">NLHE</option>
+                  <option value="PLO">PLO</option>
+                  <option value="PLO8">PLO8</option>
+                  <option value="STUD8">STUD8</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {filteredTables.length === 0 ? (
+            <div className="text-center text-gray-500 py-10">
+              {lobbyTables.length === 0 ? "Loading active tournaments..." : "No tournaments match these filters."}
+            </div>
           ) : (
-            lobbyTables.map((table) => (
+            filteredTables.map((table) => (
               <div
                 key={table.id}
                 className="glass-panel hover:border-primary/40 p-4 flex flex-col justify-between transition-all"
               >
-                <div className="flex justify-between items-center mb-3">
+                <div className="flex justify-between items-center mb-2">
                   <h3 className="font-bold text-lg text-gray-200">{table.name}</h3>
                   <span
                     className={`text-xs px-2 py-0.5 rounded-full font-bold uppercase ${table.status === "playing"
@@ -390,6 +455,16 @@ export function HomeTab() {
                       }`}
                   >
                     {table.status}
+                  </span>
+                </div>
+
+                {/* Variant & Stakes badge row */}
+                <div className="flex gap-2 mb-3">
+                  <span className="text-xs bg-primary/10 text-primary-light px-2 py-0.5 rounded border border-primary/20 font-semibold">
+                    {table.game_type ?? "NLHE"}
+                  </span>
+                  <span className="text-xs bg-neon-gold/10 text-neon-gold px-2 py-0.5 rounded border border-neon-gold/20 font-mono">
+                    Stakes: {table.stakes_label ?? "$0.50 / $1"}
                   </span>
                 </div>
 
