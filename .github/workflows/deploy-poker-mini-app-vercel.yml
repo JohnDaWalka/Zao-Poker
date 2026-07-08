@@ -51,10 +51,12 @@ jobs:
       - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: |
           cd poker-mini-app
           echo "Deploying with Vercel CLI (debug mode)..."
-          vercel deploy --prod --yes --token "$VERCEL_TOKEN" --debug 2>&1 | tee deploy.log
+          vercel deploy --prod --yes --force --token "$VERCEL_TOKEN" -e TURSO_DATABASE_URL="$TURSO_DATABASE_URL" -e TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN" --debug 2>&1 | tee deploy.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
             echo "=== DEPLOY FAILED ==="
