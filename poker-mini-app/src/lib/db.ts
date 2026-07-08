@@ -6,6 +6,13 @@ import os from "os";
 import path from "path";
 
 const localDbPath = path.join(os.tmpdir(), "poker_local.db");
+
+// Log which database mode we're in (helpful for debugging deploys)
+if (process.env.TURSO_DATABASE_URL) {
+  console.log("[db] Using Turso cloud database");
+} else {
+  console.log("[db] Using local SQLite fallback:", localDbPath);
+}
 const url =
   process.env.TURSO_DATABASE_URL ||
   process.env.TURSO_CONNECTION_URL ||
