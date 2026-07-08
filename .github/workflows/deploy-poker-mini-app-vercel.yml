@@ -43,11 +43,10 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          npm install -g vercel@37.0.0
           echo "Checking Vercel token..."
-          vercel whoami --token "$VERCEL_TOKEN" || echo "Token verification failed"
+          npx vercel whoami --token "$VERCEL_TOKEN" || echo "Token verification failed"
           echo "Checking project access..."
-          vercel project ls --token "$VERCEL_TOKEN" 2>&1 | head -20 || echo "Project listing failed"
+          npx vercel project ls --token "$VERCEL_TOKEN" 2>&1 | head -20 || echo "Project listing failed"
       - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -56,7 +55,7 @@ jobs:
         run: |
           cd poker-mini-app
           echo "Deploying with Vercel CLI (debug mode)..."
-          vercel deploy --prod --yes --force --token "$VERCEL_TOKEN" -e TURSO_DATABASE_URL="$TURSO_DATABASE_URL" -e TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN" --debug 2>&1 | tee deploy.log
+          npx vercel deploy --prod --yes --force --token "$VERCEL_TOKEN" -e TURSO_DATABASE_URL="$TURSO_DATABASE_URL" -e TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN" --debug 2>&1 | tee deploy.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
             echo "=== DEPLOY FAILED ==="
