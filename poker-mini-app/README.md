@@ -51,3 +51,5 @@ To deploy the frontend to Vercel:
 2. In the project settings, set the **Root Directory** to `poker-mini-app`.
 3. Configure your production environment variables.
 4. Deploy!
+# Turso Database Configuration
+ 
