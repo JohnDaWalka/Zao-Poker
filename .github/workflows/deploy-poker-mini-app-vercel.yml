@@ -29,16 +29,12 @@ jobs:
           npm run build
       - name: Link Vercel Project
         env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_ORG_ID: team_OLDXmnQU1GUpJkYOBot9Kaad
+          VERCEL_PROJECT_ID: prj_wvuZqXR7kRceINGY0PUX9b9Cojmq
         run: |
-          if [ -n "$VERCEL_ORG_ID" ] && [ -n "$VERCEL_PROJECT_ID" ]; then
-            mkdir -p .vercel
-            echo "{\"orgId\":\"$VERCEL_ORG_ID\",\"projectId\":\"$VERCEL_PROJECT_ID\"}" > .vercel/project.json
-            echo "Linked Vercel project: $VERCEL_PROJECT_ID"
-          else
-            echo "Warning: VERCEL_ORG_ID and VERCEL_PROJECT_ID not set. Deploy may fail if project is not linked."
-          fi
+          mkdir -p .vercel
+          echo "{\"orgId\":\"$VERCEL_ORG_ID\",\"projectId\":\"$VERCEL_PROJECT_ID\"}" > .vercel/project.json
+          echo "Linked Vercel project: $VERCEL_PROJECT_ID"
       - name: Verify Vercel Token
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
