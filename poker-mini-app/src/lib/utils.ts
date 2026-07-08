@@ -57,6 +57,16 @@ export async function getFarcasterDomainManifest(): Promise<Manifest> {
       splashImageUrl: APP_SPLASH_URL,
       splashBackgroundColor: APP_SPLASH_BACKGROUND_COLOR,
       webhookUrl: APP_WEBHOOK_URL,
+      // Poker frame integration — routes Farcaster frame actions to the swarm API
+      frame: {
+        version: 'vNext',
+        imageUrl: `${APP_URL}/api/poker/frame?scene=lobby`,
+        buttonTitle: 'Play Poker',
+        action: {
+          type: 'post',
+          url: `${APP_URL}/api/poker/swarm`,
+        },
+      },
     },
   };
 }
