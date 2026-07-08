@@ -1,0 +1,6 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/poker-mini-app"
+    schedule:
+      interval: "weekly"

@@ -67,6 +67,6 @@ export async function getFarcasterDomainManifest(): Promise<Manifest> {
           url: `${APP_URL}/api/poker/swarm`,
         },
       },
-    },
+    } as any,
   };
 }

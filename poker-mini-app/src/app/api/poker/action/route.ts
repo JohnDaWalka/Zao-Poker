@@ -226,7 +226,7 @@ export async function POST(req: NextRequest) {
       nextPlayerData?.stack_size ?? 0,
       table.pot_size,
       table.phase as 'preflop' | 'flop' | 'turn' | 'river',
-      nextPlayerData?.has_acted === 1 ?? false
+      nextPlayerData?.has_acted === 1
     );
 
     // 6. Build new info set for the active player
