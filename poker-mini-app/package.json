@@ -60,7 +60,7 @@
     "@libsql/client": "^0.17.4",
     "@neynar/react": "^1.2.22",
     "@pigment-css/react": "^0.0.31",
-    "@privy-io/react-auth": "^3.32.2",
+    "@privy-io/react-auth": "^3.34.0",
     "@privy-io/wagmi": "^4.0.13",
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/web3.js": "^1.98.4",
