@@ -12,7 +12,6 @@ import {
   TIER_LABELS,
   TIER_DESCRIPTIONS,
   DEFAULT_THRESHOLDS,
-  STRICT_THRESHOLDS,
 } from "~/lib/user-vetting";
 
 type CheckStatus = "loading" | "ok" | "error" | "skipped";
@@ -22,6 +21,103 @@ interface CheckResult {
   status: CheckStatus;
   message?: string;
   detail?: string;
+}
+
+function FramePreview() {
+  const [scene, setScene] = useState("lobby");
+  const [pot, setPot] = useState(1250);
+  const [facing, setFacing] = useState(100);
+  const [stack, setStack] = useState(8750);
+  const [street, setStreet] = useState("flop");
+  const [community, setCommunity] = useState("Ah,Kd,7c");
+  const [hole, setHole] = useState("Qs,Jh");
+  const [historyStr, setHistoryStr] = useState("1c2h");
+  const [advice, setAdvice] = useState("Call for pot odds");
+  const [frameUrl, setFrameUrl] = useState("");
+
+  useEffect(() => {
+    const base = typeof window !== "undefined" ? window.location.origin : "";
+    const params = new URLSearchParams();
+    params.set("scene", scene);
+    if (scene === "table") {
+      params.set("community", community);
+      params.set("hole", hole);
+      params.set("pot", String(pot));
+      params.set("street", street);
+      params.set("facing", String(facing));
+      params.set("stack", String(stack));
+      params.set("history", historyStr);
+      if (advice) params.set("advice", advice);
+    }
+    setFrameUrl(`${base}/api/poker/frame?${params.toString()}`);
+  }, [scene, community, hole, pot, street, facing, stack, historyStr, advice]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2 flex-wrap">
+        {["lobby", "table", "not_seated"].map((s) => (
+          <button
+            key={s}
+            onClick={() => setScene(s)}
+            className={`px-3 py-1 rounded text-sm transition ${scene === s ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300 hover:bg-gray-600"}`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
+      {scene === "table" && (
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <div>
+            <label className="text-gray-500 block">Community</label>
+            <input value={community} onChange={(e) => setCommunity(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="text-gray-500 block">Hole Cards</label>
+            <input value={hole} onChange={(e) => setHole(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="text-gray-500 block">Pot</label>
+            <input type="number" value={pot} onChange={(e) => setPot(Number(e.target.value))} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="text-gray-500 block">Facing Bet</label>
+            <input type="number" value={facing} onChange={(e) => setFacing(Number(e.target.value))} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="text-gray-500 block">Stack</label>
+            <input type="number" value={stack} onChange={(e) => setStack(Number(e.target.value))} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="text-gray-500 block">Street</label>
+            <select value={street} onChange={(e) => setStreet(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white">
+              {["preflop", "flop", "turn", "river"].map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-gray-500 block">History</label>
+            <input value={historyStr} onChange={(e) => setHistoryStr(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="text-gray-500 block">AI Advice (optional)</label>
+            <input value={advice} onChange={(e) => setAdvice(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
+          </div>
+        </div>
+      )}
+
+      {frameUrl && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <input value={frameUrl} readOnly className="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-400" />
+            <a href={frameUrl} target="_blank" rel="noopener noreferrer" className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm">Open</a>
+          </div>
+          <div className="rounded-lg overflow-hidden border border-gray-700">
+            <img src={frameUrl} alt="Frame preview" className="w-full" style={{ maxHeight: 400, objectFit: "contain" }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function StatusDot({ status }: { status: CheckStatus }) {
@@ -166,7 +262,6 @@ export default function TesterPage() {
       if (res.ok) {
         const data = await res.json();
         setNeynarUser(data.users?.[0] || null);
-        // Also fetch vetting
         await fetchVetting(parseInt(fid));
       } else {
         setNeynarUser(null);
@@ -432,6 +527,14 @@ export default function TesterPage() {
               <p><strong>Strict Threshold:</strong> Score ≥ 0.70 + 50 followers</p>
               <p><strong>Elite Threshold:</strong> Score ≥ 0.85 + Power Badge + 500 followers</p>
             </div>
+          </div>
+        </div>
+
+        {/* Farcaster Frame Preview */}
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold text-gray-300 mb-2">Farcaster Frame Preview</h2>
+          <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-4 space-y-3">
+            <FramePreview />
           </div>
         </div>
 
