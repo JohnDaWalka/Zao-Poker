@@ -99,15 +99,7 @@ function getDefaultMinVetScore(buyIn: number): number {
 }
 
 async function withTransaction<T>(fn: () => Promise<T>): Promise<T> {
-  await db.execute("BEGIN TRANSACTION");
-  try {
-    const result = await fn();
-    await db.execute("COMMIT");
-    return result;
-  } catch (error) {
-    await db.execute("ROLLBACK");
-    throw error;
-  }
+  return await fn();
 }
 
 // 52-card deck generator and shuffler
@@ -380,6 +372,18 @@ export async function dealNewHand(tableId: string, fids: number[]) {
     sql: "SELECT fid, seat_index, stack_size FROM players WHERE table_id = ? AND status != 'sitting_out' ORDER BY seat_index ASC",
     args: [tableId],
   });
+
+  // Automatically top up busted players to starting stack (5000) so they aren't locked out of the new hand
+  for (const player of seatedRows) {
+    if (Number(player.stack_size || 0) <= 0) {
+      await db.execute({
+        sql: "UPDATE players SET stack_size = 5000 WHERE fid = ? AND table_id = ?",
+        args: [player.fid, tableId],
+      });
+      player.stack_size = 5000;
+    }
+  }
+
   const seatedPlayers = seatedRows.filter((p: any) => Number(p.stack_size || 0) > 0);
   if (seatedPlayers.length < config.minPlayers) {
     console.log(`[poker:${tableId}] dealNewHand: not enough active players for ${config.variant}`);
@@ -1637,7 +1641,7 @@ export async function POST(request: Request) {
 
       if (isAlreadySeated) {
         await db.execute({
-          sql: "UPDATE players SET username = ?, pfp_url = ?, last_seen = CURRENT_TIMESTAMP, neynar_score = COALESCE(?, neynar_score) WHERE fid = ? AND table_id = ?",
+          sql: "UPDATE players SET username = ?, pfp_url = ?, last_seen = CURRENT_TIMESTAMP, neynar_score = COALESCE(?, neynar_score), stack_size = CASE WHEN stack_size <= 0 THEN 5000 ELSE stack_size END WHERE fid = ? AND table_id = ?",
           args: [username || `User#${fid}`, pfp_url || "", neynarScore, fid, effectiveTableId],
         });
       } else {
