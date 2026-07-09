@@ -309,7 +309,7 @@ function sampleTrialContext(
 
 function runMonteCarloEquityNormalized(spot: SolverSpot): MonteCarloResult {
   const opponentRangeProfile = inferOpponentRangeProfile(spot);
-  const trials = Math.max(180, Math.floor(spot.trials ?? 500));
+  const trials = Math.max(25, Math.floor(spot.trials ?? 150));
   let wins = 0;
   let ties = 0;
 
@@ -489,8 +489,8 @@ export function analyzeHoldemSpot(rawSpot: SolverSpot): SolverAnalysis {
   const regrets = emptyActionMap(actions);
   const strategySum = emptyActionMap(actions);
   const actionEvs = emptyActionMap(actions);
-  const iterations = Math.max(180, Math.floor(spot.iterations ?? 360));
-  const rolloutTrials = Math.max(40, Math.floor((spot.trials ?? 500) / 5));
+  const iterations = Math.max(15, Math.floor(spot.iterations ?? 80));
+  const rolloutTrials = Math.max(5, Math.floor((spot.trials ?? 100) / 5));
 
   for (let iteration = 1; iteration <= iterations; iteration += 1) {
     const positiveRegrets = actions.map((action) => Math.max(0, regrets[action]));

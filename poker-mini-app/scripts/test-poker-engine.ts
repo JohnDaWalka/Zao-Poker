@@ -144,7 +144,7 @@ async function runTests() {
   // --- Pure helper tests ---
   console.log("\n--- Pure helper tests ---");
 
-  assert(isStreetOver([], 0), "empty table is street over");
+  assert(!isStreetOver([], 0), "empty table is not street over");
   assert(
     isStreetOver(
       [

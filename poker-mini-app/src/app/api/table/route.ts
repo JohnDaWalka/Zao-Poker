@@ -317,10 +317,9 @@ export function evaluateAIAction(
     toCall,
     stackSize,
     opponentCount: 1,
-    position: "oop",
     history: actionHistory,
-    iterations: 220,
-    trials: 320,
+    iterations: 30,
+    trials: 50,
   });
 
   // Force see flop in practice (esp. heads-up GTO) to guarantee board cards are dealt
