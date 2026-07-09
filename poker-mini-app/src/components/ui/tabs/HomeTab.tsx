@@ -29,6 +29,7 @@ interface TableData {
   start_time: string;
   game_type?: string;
   stakes_label?: string;
+  is_viewer_seated?: boolean;
 }
 
 function isTournamentTable(table: TableData) {
@@ -482,23 +483,29 @@ export function HomeTab() {
                     onClick={() => handleJoinTable(table.id)}
                     disabled={
                       joiningTableId !== null ||
-                      table.player_count >= table.max_players ||
-                      (table.status === "playing" && table.player_count >= 2)
+                      (!table.is_viewer_seated && (
+                        table.player_count >= table.max_players ||
+                        (table.status === "playing" && table.player_count >= 2)
+                      ))
                     }
                     className={`text-sm font-bold py-2 px-5 rounded-lg shadow transition-transform transform ${joiningTableId === null &&
-                        table.player_count < table.max_players &&
-                        (table.status !== "playing" || table.player_count < 2)
+                        (table.is_viewer_seated || (
+                          table.player_count < table.max_players &&
+                          (table.status !== "playing" || table.player_count < 2)
+                        ))
                         ? "bg-green-600 hover:bg-green-700 text-white active:scale-95"
                         : "bg-gray-700 text-gray-500 cursor-not-allowed"
                       }`}
                   >
                     {joiningTableId === table.id
                       ? "Joining..."
-                      : table.player_count >= table.max_players
-                        ? "Full"
-                        : table.status === "playing" && table.player_count >= 2
-                          ? "In Progress"
-                          : "Join Room"}
+                      : table.is_viewer_seated
+                        ? "Rejoin"
+                        : table.player_count >= table.max_players
+                          ? "Full"
+                          : table.status === "playing" && table.player_count >= 2
+                            ? "In Progress"
+                            : "Join Room"}
                   </button>
                 </div>
               </div>

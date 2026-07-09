@@ -1371,6 +1371,9 @@ export async function GET(request: Request) {
             (player) => !isBotPlayer(player) && Number(player.is_ready || 0) === 1,
           ).length,
           normalized_status: getNormalizedLobbyStatus(table, tablePlayers.length),
+          is_viewer_seated: hasCurrentFid && tablePlayers.some(
+            (player) => Number(player.fid) === currentFid
+          ),
           supports_ready_state: true,
           supports_table_creation: true,
         };
