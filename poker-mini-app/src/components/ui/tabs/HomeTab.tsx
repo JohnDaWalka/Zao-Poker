@@ -31,6 +31,17 @@ interface TableData {
   stakes_label?: string;
 }
 
+function isTournamentTable(table: TableData) {
+  const name = (table.name || "").toLowerCase();
+  return (
+    name.includes("tourney") ||
+    name.includes("tournament") ||
+    name.includes("sit & go") ||
+    name.includes("sng") ||
+    name.includes("turbo")
+  );
+}
+
 export function HomeTab() {
   // Falls back Farcaster user -> connected wallet -> guest, so browsers/
   // wallets outside Farcaster get a stable per-user identity instead of all
@@ -46,9 +57,7 @@ export function HomeTab() {
   const [lobbyTables, setLobbyTables] = useState<TableData[]>([]);
   const [joinError, setJoinError] = useState<string>("");
   const [joiningTableId, setJoiningTableId] = useState<string | null>(null);
-  const [lobbySearch, setLobbySearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [gameFilter, setGameFilter] = useState<string>("all");
+  const [lobbyTypeTab, setLobbyTypeTab] = useState<"cash" | "tournament">("cash");
 
   // Active table states
   const [tableStatus, setTableStatus] = useState<string>("waiting");
@@ -361,17 +370,8 @@ export function HomeTab() {
   );
 
   const filteredTables = lobbyTables.filter((table) => {
-    const matchesSearch =
-      lobbySearch.trim().length === 0 ||
-      table.name.toLowerCase().includes(lobbySearch.trim().toLowerCase()) ||
-      (table.stakes_label ?? "").toLowerCase().includes(lobbySearch.trim().toLowerCase());
-    const matchesStatus =
-      statusFilter === "all" ||
-      table.status === statusFilter;
-    const matchesGame =
-      gameFilter === "all" ||
-      (table.game_type ?? "NLHE") === gameFilter;
-    return matchesSearch && matchesStatus && matchesGame;
+    const isTourney = isTournamentTable(table);
+    return lobbyTypeTab === "cash" ? !isTourney : isTourney;
   });
 
   // LOBBY VIEW
@@ -393,52 +393,45 @@ export function HomeTab() {
             </div>
           )}
 
-          {/* Filter Controls */}
-          <div className="bg-surface-light border border-primary/10 rounded-xl p-4 space-y-3 shadow-lg">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Search</label>
-              <input
-                type="text"
-                placeholder="Table name or stakes..."
-                value={lobbySearch}
-                onChange={(e) => setLobbySearch(e.target.value)}
-                className="w-full bg-surface-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-light transition-colors"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</label>
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="w-full bg-surface-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-light transition-colors"
-                >
-                  <option value="all">All Statuses</option>
-                  <option value="waiting">Waiting</option>
-                  <option value="playing">Playing</option>
-                  <option value="finished">Finished</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">Game</label>
-                <select
-                  value={gameFilter}
-                  onChange={(e) => setGameFilter(e.target.value)}
-                  className="w-full bg-surface-dark border border-primary/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-light transition-colors"
-                >
-                  <option value="all">All Games</option>
-                  <option value="NLHE">NLHE</option>
-                  <option value="PLO">PLO</option>
-                  <option value="PLO8">PLO8</option>
-                  <option value="STUD8">STUD8</option>
-                </select>
-              </div>
-            </div>
+          {/* Tournament / Cash Game Tab Selection */}
+          <div className="flex bg-surface-dark border border-primary/10 p-1 rounded-xl w-full shadow-inner">
+            <button
+              onClick={() => setLobbyTypeTab("cash")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                lobbyTypeTab === "cash"
+                  ? "bg-primary text-white shadow-md shadow-primary/20"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              <span>💵</span> Cash Games
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                lobbyTypeTab === "cash" ? "bg-white/20 text-white" : "bg-primary/10 text-primary-light"
+              }`}>
+                {lobbyTables.filter(t => !isTournamentTable(t)).length}
+              </span>
+            </button>
+            <button
+              onClick={() => setLobbyTypeTab("tournament")}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                lobbyTypeTab === "tournament"
+                  ? "bg-primary text-white shadow-md shadow-primary/20"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              <span>🏆</span> Tournaments
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                lobbyTypeTab === "tournament" ? "bg-white/20 text-white" : "bg-primary/10 text-primary-light"
+              }`}>
+                {lobbyTables.filter(t => isTournamentTable(t)).length}
+              </span>
+            </button>
           </div>
 
           {filteredTables.length === 0 ? (
             <div className="text-center text-gray-500 py-10">
-              {lobbyTables.length === 0 ? "Loading active tournaments..." : "No tournaments match these filters."}
+              {lobbyTables.length === 0
+                ? "Loading active games..."
+                : `No active ${lobbyTypeTab === "cash" ? "cash games" : "tournaments"} available.`}
             </div>
           ) : (
             filteredTables.map((table) => (
