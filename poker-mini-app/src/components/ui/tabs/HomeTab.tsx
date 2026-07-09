@@ -96,7 +96,8 @@ export function HomeTab() {
     if (gameState !== "lobby") return;
     const fetchLobby = async () => {
       try {
-        const res = await fetch(getApiUrl("/api/table"));
+        const url = getApiUrl(universalUser.fid ? `/api/table?fid=${universalUser.fid}` : "/api/table");
+        const res = await fetch(url);
         const data = await res.json();
         if (res.ok && data.success) {
           setLobbyTables(data.tables);
@@ -111,7 +112,7 @@ export function HomeTab() {
     fetchLobby();
     const interval = setInterval(fetchLobby, 4000);
     return () => clearInterval(interval);
-  }, [gameState]);
+  }, [gameState, universalUser.fid]);
 
   // 2. Poll Active Table / Waiting Room state
   useEffect(() => {
