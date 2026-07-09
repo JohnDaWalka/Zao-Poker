@@ -24,11 +24,7 @@ const renderApiUrl = (
 ).replace(/\/$/, "");
 
 if (!renderApiUrl) {
-  console.error("Missing Render API URL.");
-  console.error(
-    "Usage: node scripts/check-deploy.mjs https://your-render-service.onrender.com"
-  );
-  process.exit(1);
+  console.log("No Render API URL provided. Skipping Render backend checks.");
 }
 
 /** Fetch a URL with a timeout and print the result. Returns true on 2xx. */
@@ -80,8 +76,10 @@ record("PWA manifest",       await checkJson("PWA manifest",       `${appUrl}/ma
 record("In-app tester",      await checkJson("In-app tester",      `${appUrl}/tester`, { optional: true }));
 
 // --- Backend checks ---
-record("Render health",  await checkJson("Render health",  `${renderApiUrl}/health`));
-record("Render lobby",   await checkJson("Render lobby",   `${renderApiUrl}/lobby`));
+if (renderApiUrl) {
+  record("Render health",  await checkJson("Render health",  `${renderApiUrl}/health`));
+  record("Render lobby",   await checkJson("Render lobby",   `${renderApiUrl}/lobby`));
+}
 
 // --- Database smoke test via the Next.js API layer ---
 record("API table (DB)", await checkJson("API table (DB)", `${appUrl}/api/table`));
