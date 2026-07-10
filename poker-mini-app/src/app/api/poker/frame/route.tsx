@@ -91,6 +91,8 @@ function TableScene({
   myStack = 0,
   history = '',
   advice = '',
+  result = '',
+  winAmount = 0,
 }: {
   community: string[];
   holeCards: string[];
@@ -100,6 +102,8 @@ function TableScene({
   myStack: number;
   history: string;
   advice: string;
+  result?: string;
+  winAmount?: number;
 }) {
   const streetLabels: Record<string, string> = {
     preflop: 'Pre-Flop', flop: 'Flop', turn: 'Turn', river: 'River',
@@ -183,6 +187,26 @@ function TableScene({
           </div>
         </div>
       )}
+
+      {/* Win/Lose overlay */}
+      {result && (
+        <div tw="absolute inset-0 z-30 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}>
+          <div tw="flex flex-col items-center px-12 py-8 rounded-2xl" style={{
+            backgroundColor: result === 'win' ? 'rgba(34,197,94,0.95)' : 'rgba(239,68,68,0.95)',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+          }}>
+            <span tw="text-8xl mb-4">{result === 'win' ? '🎉' : '💀'}</span>
+            <span tw="text-5xl font-black text-white">
+              {result === 'win' ? 'YOU WIN!' : 'YOU LOSE'}
+            </span>
+            {winAmount !== 0 && (
+              <span tw="text-3xl font-bold text-white mt-4">
+                {winAmount > 0 ? '+' : ''}{winAmount.toLocaleString()} chips
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       
       {/* Action history */}
       {history && (
@@ -225,6 +249,8 @@ export async function GET(request: NextRequest) {
   const myStack = Number(searchParams.get('stack') ?? 0);
   const history = searchParams.get('history') ?? '';
   const advice = searchParams.get('advice') ?? '';
+  const result = searchParams.get('result') ?? '';
+  const winAmount = Number(searchParams.get('winAmount') ?? 0);
 
   let content;
   switch (scene) {
@@ -245,6 +271,8 @@ export async function GET(request: NextRequest) {
           myStack={myStack}
           history={history}
           advice={advice}
+          result={result}
+          winAmount={winAmount}
         />
       );
   }
