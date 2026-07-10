@@ -137,38 +137,26 @@ export function compareScores(a: number[], b: number[]): number {
   return 0;
 }
 
-/** Draw 5 cards from the remaining deck (excluding dead cards). */
-function drawBoard(dead: Set<string>, rng: () => number): Card[] {
+/** Draw N cards from the remaining deck (excluding dead cards). */
+function drawCards(dead: Set<string>, rng: () => number, count: number): Card[] {
   const available = FULL_DECK.filter((c) => !dead.has(cardToStr(c)));
-  const board: Card[] = [];
+  const drawn: Card[] = [];
   const used = new Set<string>();
-  while (board.length < 5 && board.length < available.length) {
+  while (drawn.length < count && drawn.length < available.length) {
     const idx = Math.floor(rng() * available.length);
     const card = available[idx];
     const key = cardToStr(card);
     if (!used.has(key) && !dead.has(key)) {
-      board.push(card);
+      drawn.push(card);
       used.add(key);
     }
   }
-  return board;
+  return drawn;
 }
 
 /** Draw a random opponent hand from remaining cards. */
 function drawOpponentHand(dead: Set<string>, rng: () => number): Card[] {
-  const available = FULL_DECK.filter((c) => !dead.has(cardToStr(c)));
-  const hand: Card[] = [];
-  const used = new Set<string>();
-  while (hand.length < 2 && hand.length < available.length) {
-    const idx = Math.floor(rng() * available.length);
-    const card = available[idx];
-    const key = cardToStr(card);
-    if (!used.has(key) && !dead.has(key)) {
-      hand.push(card);
-      used.add(key);
-    }
-  }
-  return hand;
+  return drawCards(dead, rng, 2);
 }
 
 /** Simple seeded random number generator for deterministic equity runs. */
@@ -187,24 +175,34 @@ export function heroEquity(
   boardCards: string[] = [],
   opponents = 1,
   trials = 1000,
+  seed?: number,
 ): { winRate: number; tieRate: number; loseRate: number; trials: number } {
-  const dead = new Set<string>([...heroCards, ...boardCards]);
   const hero = heroCards.map(strToCard);
   const board = boardCards.map(strToCard);
-  const rng = mulberry32(Date.now());
+  const rng = mulberry32(seed ?? Date.now());
 
   let wins = 0;
   let ties = 0;
 
   for (let i = 0; i < trials; i++) {
-    const simBoard = board.length >= 5 ? board : drawBoard(dead, rng);
+    // Build simulation dead cards: hero + original board + any drawn cards
+    const simDead = new Set<string>([...heroCards, ...boardCards]);
+    
+    // Complete the board if needed (draw remaining cards)
+    const cardsToDraw = 5 - board.length;
+    const drawnBoard = cardsToDraw > 0 ? drawCards(simDead, rng, cardsToDraw) : [];
+    const simBoard = [...board, ...drawnBoard];
+    
+    // Add drawn board cards to dead set so opponent can't get them
+    for (const c of drawnBoard) simDead.add(cardToStr(c));
+    
     const heroScore = evaluateHand([...hero, ...simBoard]);
 
     let heroBeats = 0;
     let heroTies = 0;
 
     for (let o = 0; o < opponents; o++) {
-      const opp = drawOpponentHand(dead, rng);
+      const opp = drawOpponentHand(simDead, rng);
       const oppScore = evaluateHand([...opp, ...simBoard]);
       const cmp = compareScores(heroScore, oppScore);
       if (cmp > 0) heroBeats++;

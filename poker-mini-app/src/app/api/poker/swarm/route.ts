@@ -96,31 +96,33 @@ export async function POST(req: NextRequest) {
     const gameState = await getGameState(gameId);
     if (!gameState) {
       // Return initial lobby frame if no game
+      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
       return NextResponse.json({
         type: 'frame',
         version: 'vNext',
-        image: `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''}/api/poker/frame?scene=lobby`,
+        image: `${baseUrl}/api/poker/frame?scene=lobby`,
         buttons: [
           { label: 'Join Table', action: 'post' },
           { label: 'Create Table', action: 'post' },
           { label: 'View Leaderboard', action: 'post' },
         ],
-        postUrl: `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''}/api/poker/swarm`,
+        postUrl: `${baseUrl}/api/poker/swarm`,
       });
     }
 
     const { table, players } = gameState;
     const player = players.find((p: any) => p.fid === fid);
     if (!player) {
+      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
       return NextResponse.json({
         type: 'frame',
         version: 'vNext',
-        image: `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''}/api/poker/frame?scene=not_seated`,
+        image: `${baseUrl}/api/poker/frame?scene=not_seated`,
         buttons: [
           { label: 'Take Seat', action: 'post' },
           { label: 'Back to Lobby', action: 'post' },
         ],
-        postUrl: `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''}/api/poker/swarm`,
+        postUrl: `${baseUrl}/api/poker/swarm`,
       });
     }
 
@@ -158,9 +160,9 @@ export async function POST(req: NextRequest) {
       selectedAction = buttonIndexToAction(buttonIndex);
     }
 
-    // Use swarm for advanced processing (odds calc, advice, etc.)
+    // Use swarm for advanced processing (odds calc, advice, frame building)
     const swarm = new PokerSwarm();
-    const swarmResult = await swarm.execute(JSON.stringify(body), {
+    const swarmResult = swarm.execute(JSON.stringify(body), {
       gameState: {
         pot: table.pot_size,
         facing: table.current_bet,
@@ -211,9 +213,11 @@ export async function POST(req: NextRequest) {
     }));
 
     // Add AI advice button if swarm provided recommendation
-    let imageUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''}/api/poker/frame?h=${nextHash}&gameId=${gameId}`;
-    if (swarmResult?.recommendation) {
-      imageUrl += `&advice=${encodeURIComponent(swarmResult.recommendation)}`;
+    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
+    let imageUrl = `${baseUrl}/api/poker/frame?h=${nextHash}&gameId=${gameId}`;
+    const advice = (swarmResult as any)?.recommendation;
+    if (advice) {
+      imageUrl += `&advice=${encodeURIComponent(advice)}`;
     }
 
     return NextResponse.json({
@@ -221,7 +225,7 @@ export async function POST(req: NextRequest) {
       version: 'vNext',
       image: imageUrl,
       buttons,
-      postUrl: `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''}/api/poker/swarm`,
+      postUrl: `${baseUrl}/api/poker/swarm`,
       state: frameState,
     });
   } catch (error) {

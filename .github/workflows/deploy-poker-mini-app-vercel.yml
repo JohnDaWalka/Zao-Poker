@@ -9,6 +9,11 @@ on:
       - ".github/workflows/deploy-poker-mini-app-vercel.yml"
   workflow_dispatch:
 
+# Prevent concurrent deployments - cancel in-progress runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -27,34 +32,26 @@ jobs:
         run: |
           cd poker-mini-app
           npm run build
-      - name: Link Vercel Project
-        env:
-          VERCEL_ORG_ID: team_OLDXmnQU1GUpJkYOBot9Kaad
-          VERCEL_PROJECT_ID: prj_wvuZqXR7kRceINGY0PUX9b9Cojmq
-        run: |
-          mkdir -p .vercel
-          echo "{\"orgId\":\"$VERCEL_ORG_ID\",\"projectId\":\"$VERCEL_PROJECT_ID\"}" > .vercel/project.json
-          echo "Linked Vercel project: $VERCEL_PROJECT_ID"
-      - name: Verify Vercel Token
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          echo "Checking Vercel token..."
-          npx vercel whoami --token "$VERCEL_TOKEN" || echo "Token verification failed"
-          echo "Checking project access..."
-          npx vercel project ls --token "$VERCEL_TOKEN" 2>&1 | head -20 || echo "Project listing failed"
       - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          ZAO_SECRET: ${{ secrets.ZAO_SECRET }}
+          NEYNAR_API_KEY: ${{ secrets.NEYNAR_API_KEY }}
         run: |
-          echo "Deploying with Vercel CLI (debug mode)..."
-          npx vercel deploy --prod --yes --force --token "$VERCEL_TOKEN" -e TURSO_DATABASE_URL="$TURSO_DATABASE_URL" -e TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN" --debug 2>&1 | tee deploy.log
+          cd poker-mini-app
+          echo "Deploying to Vercel..."
+          npx vercel deploy --prod --yes --token "$VERCEL_TOKEN" \
+            -e TURSO_DATABASE_URL="$TURSO_DATABASE_URL" \
+            -e TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN" \
+            -e ZAO_SECRET="$ZAO_SECRET" \
+            -e NEYNAR_API_KEY="$NEYNAR_API_KEY" \
+            2>&1 | tee deploy.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
             echo "=== DEPLOY FAILED ==="
-            echo "Last 50 lines of output:"
             tail -n 50 deploy.log || true
             exit $EXIT_CODE
           fi
+          echo "=== DEPLOY SUCCESS ==="

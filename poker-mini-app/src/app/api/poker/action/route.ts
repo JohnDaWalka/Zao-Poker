@@ -50,13 +50,12 @@ async function getGameState(gameId: string): Promise<{
 
 function parseBoard(boardStr: string): string[] {
   if (!boardStr || boardStr.trim() === '') return [];
-  // Expect comma-separated like "Ah,Kd,7c"
-  return boardStr.split(',').map(c => c.trim()).filter(Boolean);
+  return boardStr.split(',').map((c) => c.trim()).filter(Boolean);
 }
 
 function parseHand(handStr: string): [string, string] | null {
   if (!handStr || handStr.trim() === '') return null;
-  const cards = handStr.split(',').map(c => c.trim()).filter(Boolean);
+  const cards = handStr.split(',').map((c) => c.trim()).filter(Boolean);
   if (cards.length < 2) return null;
   return [cards[0], cards[1]] as [string, string];
 }
@@ -71,13 +70,8 @@ function buildStacks(players: PlayerRow[]): Record<number, number> {
   return stacks;
 }
 
-function findPlayerSeatByFid(players: PlayerRow[], fid: number): number {
-  const p = players.find(pl => pl.fid === fid);
-  return p?.seat_index ?? -1;
-}
-
 function findPlayerBySeat(players: PlayerRow[], seat: number): PlayerRow | undefined {
-  return players.find(p => p.seat_index === seat);
+  return players.find((p) => p.seat_index === seat);
 }
 
 async function applyAction(
@@ -213,8 +207,8 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Determine whose turn it is next (simple clockwise rotation)
-    const activeSeats = players.filter(p => p.status !== 'folded' && p.status !== 'waiting');
-    const currentIdx = activeSeats.findIndex(p => p.seat_index === playerSeat);
+    const activeSeats = players.filter((p) => p.status !== 'folded' && p.status !== 'waiting');
+    const currentIdx = activeSeats.findIndex((p) => p.seat_index === playerSeat);
     const nextIdx = (currentIdx + 1) % activeSeats.length;
     const nextPlayer = activeSeats[nextIdx];
     const nextSeat = nextPlayer?.seat_index ?? playerSeat;
@@ -244,6 +238,7 @@ export async function POST(req: NextRequest) {
     const nextHash = hashInfoSet(nextInfoSet, SERVER_SECRET);
 
     // 7. Return Farcaster-optimized payload
+    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
     return NextResponse.json({
       hash: nextHash,
       pot: table.pot_size,
@@ -252,14 +247,14 @@ export async function POST(req: NextRequest) {
       facing: table.current_bet,
       myStack: nextPlayerData?.stack_size ?? 0,
       myCards: nextSeat === playerSeat ? holeCards : null,
-      actions: edges.map(e => ({
+      actions: edges.map((e) => ({
         t: e.type,
         l: e.label,
         amt: e.minAmount,
         term: e.isTerminal,
       })),
       history: encodeActionHistory(
-        players.map((p, i) => ({
+        players.map((p) => ({
           seat: p.seat_index,
           action: p.has_acted,
           amount: p.current_bet,
@@ -270,9 +265,9 @@ export async function POST(req: NextRequest) {
       // Farcaster Frame metadata
       frame: {
         version: 'vNext',
-        image: `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''}/api/poker/frame?h=${nextHash}`,
-        buttons: edges.map(e => ({ label: e.label, action: 'post' })),
-        post_url: `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''}/api/poker/action`,
+        image: `${baseUrl}/api/poker/frame?h=${nextHash}`,
+        buttons: edges.map((e) => ({ label: e.label, action: 'post' })),
+        post_url: `${baseUrl}/api/poker/action`,
       },
     });
   } catch (error) {
