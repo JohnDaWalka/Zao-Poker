@@ -3,6 +3,7 @@ import { getValidActions, BET_ABSTRACTION } from '~/lib/poker/abstraction';
 import { buildInfoSet, hashInfoSet, verifyInfoSet } from '~/lib/poker/state';
 import { encodeActionHistory } from '~/lib/poker/encoding';
 import { db } from '~/lib/db';
+import { startNewHand, advanceStreet, isBettingRoundComplete, getNextTurnSeat } from '~/lib/game-engine';
 
 const SERVER_SECRET = process.env.ZAO_SECRET || process.env.VERCEL_URL || 'zao-poker-dev-secret';
 
@@ -80,12 +81,12 @@ async function applyAction(
   seatIndex: number,
   actionType: number,
   amount: number
-): Promise<void> {
+): Promise<{ advanced: boolean; nextSeat: number | null }> {
   const player = findPlayerBySeat(players, seatIndex);
-  if (!player) return;
+  if (!player) return { advanced: false, nextSeat: null };
 
   const table = (await getGameState(tableId))?.table;
-  if (!table) return;
+  if (!table) return { advanced: false, nextSeat: null };
 
   const { current_bet, pot_size } = table;
   const playerCurrentBet = player.current_bet;
@@ -124,7 +125,7 @@ async function applyAction(
     }
   }
 
-  // Mark player as acted and advance turn
+  // Mark player as acted
   await db.execute({
     sql: 'UPDATE players SET has_acted = 1 WHERE table_id = ? AND seat_index = ?',
     args: [tableId, seatIndex],
@@ -137,6 +138,27 @@ async function applyAction(
     sql: 'UPDATE tables SET action_history = ? WHERE id = ?',
     args: [newHistory, tableId],
   });
+
+  // Check if betting round is complete and advance if so
+  const isComplete = await isBettingRoundComplete(tableId);
+  if (isComplete) {
+    await advanceStreet(tableId);
+    return { advanced: true, nextSeat: null };
+  }
+
+  // Otherwise, get next player's turn
+  const nextSeat = await getNextTurnSeat(tableId, seatIndex);
+  if (nextSeat !== null) {
+    const nextPlayer = findPlayerBySeat(players, nextSeat);
+    if (nextPlayer) {
+      await db.execute({
+        sql: 'UPDATE tables SET current_turn_fid = ? WHERE id = ?',
+        args: [nextPlayer.fid, tableId],
+      });
+    }
+  }
+
+  return { advanced: false, nextSeat };
 }
 
 export async function POST(req: NextRequest) {
@@ -154,7 +176,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    const { table, players } = gameState;
+    let { table, players } = gameState;
     const activePlayer = findPlayerBySeat(players, playerSeat);
     if (!activePlayer) {
       return NextResponse.json({ error: 'Player not found at seat' }, { status: 404 });
@@ -187,9 +209,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Apply action if provided
+    let actionResult = { advanced: false, nextSeat: null as number | null };
     if (selectedAction !== undefined && selectedAction !== null) {
       const amount = selectedAmount ?? 0;
-      await applyAction(gameId, players, playerSeat, selectedAction, amount);
+      actionResult = await applyAction(gameId, players, playerSeat, selectedAction, amount);
       // Re-fetch after mutation
       const refreshed = await getGameState(gameId);
       if (!refreshed) {
@@ -204,14 +227,25 @@ export async function POST(req: NextRequest) {
       table.pot_size = refreshed.table.pot_size;
       table.current_bet = refreshed.table.current_bet;
       table.action_history = refreshed.table.action_history;
+      table.phase = refreshed.table.phase;
+      players = refreshed.players; // Update players list
     }
 
-    // 4. Determine whose turn it is next (simple clockwise rotation)
-    const activeSeats = players.filter((p) => p.status !== 'folded' && p.status !== 'waiting');
-    const currentIdx = activeSeats.findIndex((p) => p.seat_index === playerSeat);
-    const nextIdx = (currentIdx + 1) % activeSeats.length;
-    const nextPlayer = activeSeats[nextIdx];
-    const nextSeat = nextPlayer?.seat_index ?? playerSeat;
+    // 4. Determine whose turn it is next
+    let nextSeat: number;
+    if (actionResult.advanced) {
+      // Street advanced — find first to act on new street
+      const activePlayers = players.filter((p) => p.status !== 'folded' && p.status !== 'waiting');
+      nextSeat = activePlayers[0]?.seat_index ?? playerSeat;
+    } else if (actionResult.nextSeat !== null) {
+      nextSeat = actionResult.nextSeat;
+    } else {
+      // Fallback: simple clockwise rotation
+      const activeSeats = players.filter((p) => p.status !== 'folded' && p.status !== 'waiting');
+      const currentIdx = activeSeats.findIndex((p) => p.seat_index === playerSeat);
+      const nextIdx = (currentIdx + 1) % activeSeats.length;
+      nextSeat = activeSeats[nextIdx]?.seat_index ?? playerSeat;
+    }
 
     // 5. Get valid actions for the next active player
     const nextPlayerData = findPlayerBySeat(players, nextSeat);
