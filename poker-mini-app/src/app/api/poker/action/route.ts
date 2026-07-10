@@ -4,6 +4,8 @@ import { buildInfoSet, hashInfoSet, verifyInfoSet } from '~/lib/poker/state';
 import { encodeActionHistory } from '~/lib/poker/encoding';
 import { db } from '~/lib/db';
 import { startNewHand, advanceStreet, isBettingRoundComplete, getNextTurnSeat } from '~/lib/game-engine';
+import { rateLimit, getClientIP } from '~/lib/rate-limit';
+import { validateActionPayload } from '~/lib/validation';
 
 const SERVER_SECRET = process.env.ZAO_SECRET || process.env.VERCEL_URL || 'zao-poker-dev-secret';
 
@@ -163,12 +165,25 @@ async function applyAction(
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { gameId, stateHash, playerSeat, selectedAction, selectedAmount } = body;
-
-    if (!gameId || typeof playerSeat !== 'number') {
-      return NextResponse.json({ error: 'gameId and playerSeat required' }, { status: 400 });
+    // Rate limit: 30 actions per minute per IP
+    const clientIP = getClientIP(req);
+    const limit = rateLimit(`action:${clientIP}`, 30, 60000);
+    if (!limit.success) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded', retryAfter: Math.ceil((limit.resetAt - Date.now()) / 1000) },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil((limit.resetAt - Date.now()) / 1000)) } }
+      );
     }
+
+    const body = await req.json();
+    
+    // Validate input
+    const validation = validateActionPayload(body);
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+    
+    const { gameId, playerSeat, selectedAction, selectedAmount, stateHash } = validation.sanitized!;
 
     // 1. Rehydrate state from DB
     const gameState = await getGameState(gameId);
