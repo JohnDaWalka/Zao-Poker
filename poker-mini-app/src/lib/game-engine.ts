@@ -7,7 +7,7 @@
 
 import { db } from './db';
 import { rankShowdownWinners, getBestOmaha8Hand, rankHighLowShowdown } from './poker-hand-evaluator';
-import { getNextStreet, getGameConfig, usesBlinds, usesBoard } from './game-rules';
+import { getNextStreet, getGameConfig, usesBlinds, usesBoard, findLowestVisibleCard } from './game-rules';
 
 const FULL_DECK = [
   'As','Ks','Qs','Js','Ts','9s','8s','7s','6s','5s','4s','3s','2s',
@@ -104,6 +104,7 @@ export async function startNewHand(tableId: string): Promise<void> {
   const config = getGameConfig(table.game_type);
   const holeCardCount = config.holeCardCount || 2;
   const activePlayers = players.filter(p => p.status !== 'waiting');
+  const isStud = !usesBoard(table.game_type);
 
   let deckIdx = 0;
   for (const p of activePlayers) {
@@ -111,15 +112,30 @@ export async function startNewHand(tableId: string): Promise<void> {
     for (let i = 0; i < holeCardCount; i++) {
       cards.push(deck[deckIdx++]);
     }
+    
+    // For stud: first 2 are hidden, 3rd is visible (door card)
+    // Then 4th, 5th, 6th are visible, 7th is hidden
+    let visibleCards = '';
+    if (isStud && cards.length >= 3) {
+      const visible = [cards[2]]; // Door card
+      if (cards.length >= 4) visible.push(cards[3]);
+      if (cards.length >= 5) visible.push(cards[4]);
+      if (cards.length >= 6) visible.push(cards[5]);
+      visibleCards = visible.join(',');
+    }
+    
     await db.execute({
-      sql: 'UPDATE players SET hand = ? WHERE table_id = ? AND fid = ?',
-      args: [cards.join(','), tableId, p.fid],
+      sql: `UPDATE players SET hand = ?, visible_cards = ? 
+            WHERE table_id = ? AND fid = ?`,
+      args: [cards.join(','), visibleCards, tableId, p.fid],
     });
   }
 
-  // Post blinds for blind games
+  // Post blinds for blind games, ante+bring-in for stud
   if (usesBlinds(table.game_type)) {
     await postBlinds(tableId, table.dealer_seat_index, activePlayers);
+  } else if (isStud) {
+    await postAnteAndBringIn(tableId, table.dealer_seat_index, activePlayers, table.game_type);
   }
 
   // Set first to act
@@ -167,6 +183,66 @@ async function postBlinds(tableId: string, dealerSeat: number, players: Player[]
   });
 }
 
+async function postAnteAndBringIn(tableId: string, dealerSeat: number, players: Player[], gameType: string): Promise<void> {
+  const config = getGameConfig(gameType);
+  const anteAmount = Math.floor(10 * (config.anteMul || 0.25));
+  const bringInAmount = Math.floor(10 * (config.bringInMul || 0.5));
+
+  // Post ante from all players
+  let totalPot = 0;
+  for (const p of players) {
+    const actual = Math.min(anteAmount, p.stack_size);
+    if (actual > 0) {
+      await db.execute({
+        sql: `UPDATE players SET stack_size = stack_size - ?, total_invested = total_invested + ?
+              WHERE table_id = ? AND fid = ?`,
+        args: [actual, actual, tableId, p.fid],
+      });
+      totalPot += actual;
+    }
+  }
+
+  // Find lowest visible card (door card) for bring-in
+  const visibleCards: { seat: number; fid: number; card: string }[] = [];
+  for (const p of players) {
+    if (p.visible_cards) {
+      const cards = p.visible_cards.split(',').filter(Boolean);
+      if (cards.length > 0) {
+        visibleCards.push({ seat: p.seat_index, fid: p.fid, card: cards[0] });
+      }
+    }
+  }
+
+  // Lowest card posts bring-in
+  if (visibleCards.length > 0) {
+    const sorted = visibleCards.sort((a, b) => {
+      const rankOrder = '23456789TJQKA';
+      const aVal = rankOrder.indexOf(a.card[0]);
+      const bVal = rankOrder.indexOf(b.card[0]);
+      if (aVal !== bVal) return aVal - bVal;
+      const suitOrder = 'shcd';
+      return suitOrder.indexOf(a.card[1]) - suitOrder.indexOf(b.card[1]);
+    });
+    const bringInPlayer = sorted[0];
+    const actualBringIn = Math.min(bringInAmount, bringInAmount, 
+      players.find(p => p.fid === bringInPlayer.fid)?.stack_size ?? 0);
+    
+    if (actualBringIn > 0) {
+      await db.execute({
+        sql: `UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ?
+              WHERE table_id = ? AND fid = ?`,
+        args: [actualBringIn, actualBringIn, actualBringIn, tableId, bringInPlayer.fid],
+      });
+      totalPot += actualBringIn;
+    }
+
+    await db.execute({
+      sql: 'UPDATE tables SET pot_size = ?, current_bet = ? WHERE id = ?',
+      args: [totalPot, bringInAmount, tableId],
+    });
+  }
+}
+
 function getFirstToActSeat(gameType: string, street: string, players: Player[], dealerSeat: number): number {
   const activePlayers = players.filter(p => p.status !== 'waiting');
   const maxPlayers = activePlayers.length;
@@ -175,7 +251,30 @@ function getFirstToActSeat(gameType: string, street: string, players: Player[], 
     // UTG (left of BB)
     return (dealerSeat + 3) % maxPlayers;
   }
-  // Postflop: left of dealer
+  
+  if (!usesBlinds(gameType)) {
+    // Stud: lowest visible card acts first on 3rd street, highest hand showing on later streets
+    if (street === 'preflop' || street === '3rd') {
+      // Find player with lowest visible card (bring-in already posted)
+      const withVisible = activePlayers.filter(p => p.visible_cards);
+      if (withVisible.length > 0) {
+        const rankOrder = '23456789TJQKA';
+        const sorted = withVisible.sort((a, b) => {
+          const aCard = a.visible_cards.split(',')[0];
+          const bCard = b.visible_cards.split(',')[0];
+          const aVal = rankOrder.indexOf(aCard[0]);
+          const bVal = rankOrder.indexOf(bCard[0]);
+          if (aVal !== bVal) return aVal - bVal;
+          const suitOrder = 'shcd';
+          return suitOrder.indexOf(aCard[1]) - suitOrder.indexOf(bCard[1]);
+        });
+        return sorted[0].seat_index;
+      }
+    }
+    // Later streets: highest hand showing acts first — simplified to left of dealer
+  }
+  
+  // Postflop / default: left of dealer
   return (dealerSeat + 1) % maxPlayers;
 }
 
