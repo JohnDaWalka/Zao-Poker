@@ -33,6 +33,8 @@ function FramePreview() {
   const [hole, setHole] = useState("Qs,Jh");
   const [historyStr, setHistoryStr] = useState("1c2h");
   const [advice, setAdvice] = useState("Call for pot odds");
+  const [result, setResult] = useState("");
+  const [winAmount, setWinAmount] = useState(0);
   const [frameUrl, setFrameUrl] = useState("");
 
   useEffect(() => {
@@ -48,9 +50,13 @@ function FramePreview() {
       params.set("stack", String(stack));
       params.set("history", historyStr);
       if (advice) params.set("advice", advice);
+      if (result) {
+        params.set("result", result);
+        params.set("winAmount", String(winAmount));
+      }
     }
     setFrameUrl(`${base}/api/poker/frame?${params.toString()}`);
-  }, [scene, community, hole, pot, street, facing, stack, historyStr, advice]);
+  }, [scene, community, hole, pot, street, facing, stack, historyStr, advice, result, winAmount]);
 
   return (
     <div className="space-y-3">
@@ -101,6 +107,18 @@ function FramePreview() {
           <div>
             <label className="text-gray-500 block">AI Advice (optional)</label>
             <input value={advice} onChange={(e) => setAdvice(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
+          </div>
+          <div>
+            <label className="text-gray-500 block">Result (optional)</label>
+            <select value={result} onChange={(e) => setResult(e.target.value)} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white">
+              <option value="">None</option>
+              <option value="win">Win 🎉</option>
+              <option value="lose">Lose 💀</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-gray-500 block">Win Amount</label>
+            <input type="number" value={winAmount} onChange={(e) => setWinAmount(Number(e.target.value))} className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white" />
           </div>
         </div>
       )}
