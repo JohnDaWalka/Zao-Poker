@@ -248,7 +248,7 @@ describe('PokerSwarm', () => {
         stacks: { 0: 500, 1: 400 },
       };
 
-      expect(verifyGameState(publicState, 0, ['Qs', 'Jh'], 'wronghash')).toBe(false);
+      expect(verifyGameState(publicState, 0, ['Qs', 'Jh'], 'wronghash', 'test-secret')).toBe(false);
     });
   });
 
@@ -307,7 +307,7 @@ describe('PokerSwarm', () => {
           community: ['Ah', 'Kd', '7c', '2s', '3d'],
           isTerminal: true,
           winners: [{ fid: 1, amount: 200 }],
-          payouts: [{ fid: 1, amount: 200 }],
+          payouts: { 1: 200 },
         },
       });
 

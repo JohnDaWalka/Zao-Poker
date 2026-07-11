@@ -12,7 +12,7 @@
 
 import { heroEquity } from '../equity-engine';
 import { buildInfoSet, hashInfoSet, verifyInfoSet, PublicState } from '../poker/state';
-import { getValidActions, BET_ABSTRACTION } from '../poker/abstraction';
+import { getValidActions } from '../poker/abstraction';
 
 // ─── Types ───
 
@@ -22,14 +22,14 @@ interface SwarmContext {
   action?: string;
 }
 
-interface GameStateSnapshot {
+export interface GameStateSnapshot {
   pot: number;
   facing: number;
   myStack: number;
   street: 'preflop' | 'flop' | 'turn' | 'river';
   myCards: string[];
   community: string[];
-  history: string;
+  history?: string;
   isTerminal?: boolean;
   winners?: Array<{ fid: number; amount: number }>;
   payouts?: Record<number, number>;
@@ -277,7 +277,7 @@ export class PokerSwarm {
             communityCards: ctx.community,
             activeSeat: 0,
             street: ctx.street,
-            actionHistory: ctx.history,
+            actionHistory: ctx.history || '',
             lastAggressor: null,
             currentBet: ctx.facing,
             stacks: { 0: ctx.myStack },
