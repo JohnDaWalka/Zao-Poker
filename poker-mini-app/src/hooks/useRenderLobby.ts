@@ -835,6 +835,17 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       user: UniversalUser,
       payload: { action: string; amount?: number },
     ) => {
+      // Without a Render lobby there is no socket; calling send() would only
+      // surface a spurious "Lobby is not connected yet." error. Game actions
+      // reach the server via takeTableAction's POST regardless.
+      if (!env.hasRenderLobby) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            "[lobby] sendGameAction skipped: no Render lobby configured (NEXT_PUBLIC_RENDER_API_URL / NEXT_PUBLIC_RENDER_WS_URL).",
+          );
+        }
+        return;
+      }
       send({ type: "game_action", payload: { tableId, user, ...payload } });
     },
     [send],

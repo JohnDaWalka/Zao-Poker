@@ -1335,13 +1335,21 @@ function LobbyView({
 function SeatDots({ table }: { table: PokerTable }) {
   return (
     <div className="ls-seat-dots">
-      {table.seats.map((seat) => (
-        <span
-          key={seat.seatNumber}
-          className={seat.user ? "filled" : ""}
-          title={seat.user?.displayName ?? `Seat ${seat.seatNumber}`}
-        />
-      ))}
+      {table.seats.map((seat) => {
+        const seatLabel = seat.user
+          ? `Seat ${seat.seatNumber}: occupied by ${seat.user.displayName}`
+          : `Seat ${seat.seatNumber}: empty`;
+
+        return (
+          <span
+            key={seat.seatNumber}
+            className={seat.user ? "filled" : ""}
+            title={seat.user?.displayName ?? `Seat ${seat.seatNumber}`}
+            role="img"
+            aria-label={seatLabel}
+          />
+        );
+      })}
     </div>
   );
 }

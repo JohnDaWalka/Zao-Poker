@@ -26,5 +26,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # next-env.d.ts is gitignored but referenced by tsconfig.json; generate
+      # it (plus route types) so CI typechecks the same ambient context as a
+      # local checkout that has run next dev/build.
+      - name: Generate Next.js types
+        run: npx next typegen
+
       - name: Run TypeScript check
         run: npx tsc --noEmit --skipLibCheck
