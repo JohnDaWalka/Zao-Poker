@@ -72,7 +72,7 @@
     "@zerodev/sdk": "^5.5.10",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.7",
-    "inquirer": "^12.4.3",
+    "inquirer": "^14.0.2",
     "lucide-react": "^1.21.0",
     "next": "^16.2.9",
     "next-auth": "^4.24.14",
