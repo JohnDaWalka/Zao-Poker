@@ -157,27 +157,41 @@ describe("poker-hand-evaluator", () => {
 
     it("returns correct low rank for wheel (best low)", () => {
       const low = getLowHandRank(["Ah", "2d", "3c", "4s", "5h"]);
-      expect(low).toEqual([1, 2, 3, 4, 5]);
+      expect(low).toEqual([5, 4, 3, 2, 1]);
     });
 
     it("returns correct low rank for 8-high", () => {
       const low = getLowHandRank(["2d", "3c", "4s", "5h", "8d"]);
-      expect(low).toEqual([2, 3, 4, 5, 8]);
+      expect(low).toEqual([8, 5, 4, 3, 2]);
     });
 
     it("ignores 6th+ card when 5+ cards present", () => {
       const low = getLowHandRank(["Ah", "2d", "3c", "4s", "5h", "6d", "7c"]);
-      expect(low).toEqual([1, 2, 3, 4, 5]);
+      expect(low).toEqual([5, 4, 3, 2, 1]);
+    });
+
+    it("qualifies when cards > 8 are present if 5 cards <= 8 exist", () => {
+      const low = getLowHandRank(["Ah", "2d", "3c", "4s", "5h", "Kd", "9h"]);
+      expect(low).toEqual([5, 4, 3, 2, 1]);
+      
+      const lowWith7 = getLowHandRank(["Ah", "2d", "3c", "4s", "7d", "Kd", "9h"]);
+      expect(lowWith7).toEqual([7, 4, 3, 2, 1]);
     });
   });
 
   describe("compareLowHandRanks", () => {
     it("lower hand wins", () => {
-      const wheel = [1, 2, 3, 4, 5];
-      const eightHigh = [2, 3, 4, 5, 8];
+      const wheel = [5, 4, 3, 2, 1];
+      const eightHigh = [8, 5, 4, 3, 2];
       expect(compareLowHandRanks(wheel, eightHigh)).toBeLessThan(0);
       expect(compareLowHandRanks(eightHigh, wheel)).toBeGreaterThan(0);
       expect(compareLowHandRanks(wheel, wheel)).toBe(0);
+    });
+
+    it("compares based on highest card first", () => {
+      const sevenLow = [7, 5, 4, 3, 2];
+      const eightLow = [8, 4, 3, 2, 1];
+      expect(compareLowHandRanks(sevenLow, eightLow)).toBeLessThan(0);
     });
   });
 
@@ -198,7 +212,7 @@ describe("poker-hand-evaluator", () => {
         ["Ah", "2d", "Ks", "Qh"],
         ["3c", "4s", "5h", "Td", "9c"]
       );
-      expect(result.low).toEqual([1, 2, 3, 4, 5]);
+      expect(result.low).toEqual([5, 4, 3, 2, 1]);
     });
 
     it("returns null low when no qualifying low", () => {
@@ -216,7 +230,7 @@ describe("poker-hand-evaluator", () => {
         ["Ah", "2d", "3c", "Ks"],
         ["4h", "5s", "6d", "7c", "8h"]
       );
-      expect(result.low).toEqual([1, 2, 4, 5, 6]);
+      expect(result.low).toEqual([6, 5, 4, 2, 1]);
     });
   });
 

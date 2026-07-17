@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { getApiUrl } from "~/lib/env";
 import { UniversalConnectBar } from "~/components/ui/UniversalConnectBar";
 import { useRenderLobby } from "~/hooks/useRenderLobby";
+import { useTableStream } from "~/hooks/useTableStream";
 import { useUniversalUser } from "~/hooks/useUniversalUser";
 
 // Helper to convert card string (e.g. "Ah") to display components
@@ -114,24 +115,7 @@ export function HomeTab() {
     return () => clearInterval(interval);
   }, [gameState, universalUser.fid]);
 
-  // 2. Poll Active Table / Waiting Room state
-  useEffect(() => {
-    if (gameState !== "table" || !selectedTableId) return;
-    const myFid = Number(universalUser.fid);
-    const fetchTableState = async () => {
-      try {
-        const res = await fetch(getApiUrl(`/api/table?table_id=${selectedTableId}&fid=${myFid}`));
-        const data = await res.json();
-        if (data.success && data.gameState) {
-          applyGameStateResponse(data, myFid);
-        }
-      } catch (e) { }
-    };
-    fetchTableState();
-    const interval = setInterval(fetchTableState, 1500);
-    return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState, selectedTableId, universalUser.fid]);
+  // 2. Poll Active Table / Waiting Room state is now handled by real-time streams below.
 
   const sendEvent = async (eventData: any) => {
     try {
@@ -178,6 +162,73 @@ export function HomeTab() {
       setPlayerCards(me.hand ? String(me.hand).split(",").filter(Boolean) : []);
     }
   };
+
+  const applyLobbyTableToUi = useCallback((table: any, myFid: number) => {
+    if (!table) return;
+    setTableName(table.name || "");
+    setTableStatus(table.status === "in_game" ? "playing" : (table.status || "waiting"));
+    setStartTime(table.startTime || "");
+    setPotSize(table.potSize || 0);
+    setPhase(table.phase || "preflop");
+    setCurrentBet(table.currentBet || 0);
+    setBoard(table.board || []);
+    setTableActionHistory(table.actionHistory || []);
+    
+    const mappedPlayers = (table.seats || []).filter((s: any) => s.user).map((s: any) => {
+      const u = s.user;
+      return {
+        fid: u.fid,
+        username: u.username,
+        pfp_url: u.avatarUrl || "",
+        stack_size: s.stack,
+        current_bet: s.currentBet,
+        hand: (s.holeCards || []).join(","),
+        seat_index: s.seatNumber - 1,
+        is_ready: s.isReady ? 1 : 0,
+        is_bot: s.isBot ? 1 : 0,
+        neynar_score: u.neynarScore,
+      };
+    });
+    
+    setSeatedPlayers(mappedPlayers);
+    setCurrentTurnFid(table.currentTurnFid ?? null);
+    if (table.currentBlinds) setCurrentBlinds(table.currentBlinds);
+    
+    const maxPlayers = table.maxPlayers;
+    if (maxPlayers) setMaxPlayers(Number(maxPlayers));
+
+    const me = mappedPlayers.find((p: any) => Number(p.fid) === myFid);
+    if (me) {
+      setPlayerStack(Number(me.stack_size) || 0);
+      setPlayerCurrentBet(Number(me.current_bet) || 0);
+      setPlayerCards(me.hand ? String(me.hand).split(",").filter(Boolean) : []);
+    }
+  }, []);
+
+  // Real-time updates for Active Table state
+  const myFid = Number(universalUser.fid);
+
+  // Sync with WebSocket lobby updates (if using Render Express server)
+  useEffect(() => {
+    if (gameState !== "table" || !selectedTableId || renderLobby.mode !== "render") return;
+    const table = renderLobby.state.tables.find((t) => t.id === selectedTableId);
+    if (table) {
+      applyLobbyTableToUi(table, myFid);
+    }
+  }, [gameState, selectedTableId, renderLobby.state.tables, renderLobby.mode, myFid, applyLobbyTableToUi]);
+
+  // Sync via SSE stream (if in Vercel serverless / local mode)
+  const handleTableStreamUpdate = useCallback((data: any) => {
+    if (data.success && data.gameState) {
+      applyGameStateResponse(data, myFid);
+    }
+  }, [myFid]);
+
+  useTableStream({
+    tableId: (gameState === "table" && selectedTableId && renderLobby.mode !== "render") ? selectedTableId : null,
+    fid: myFid,
+    onTableUpdate: handleTableStreamUpdate,
+  });
 
   const handleJoinTable = async (tableId: string) => {
     if (joiningTableId) return;

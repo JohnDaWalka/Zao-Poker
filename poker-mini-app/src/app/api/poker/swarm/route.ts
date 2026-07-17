@@ -47,6 +47,8 @@ function actionToButtonIndex(action: number): number {
   return map[action] ?? 2;
 }
 
+import { startNewHand, applyAction } from '~/lib/game-engine';
+
 async function getGameState(gameId: string) {
   const { rows: tableRows } = await db.execute({
     sql: 'SELECT * FROM tables WHERE id = ?',
@@ -92,8 +94,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Get game state from DB
-    const gameState = await getGameState(gameId);
+    // Auto-create/provision default table if missing
+    let gameState = await getGameState(gameId);
+    if (!gameState && (buttonIndex === 1 || buttonIndex === 2 || gameId === 'default')) {
+      await db.execute({
+        sql: `INSERT INTO tables (id, name, game_type, status, dealer_seat_index, max_players, pot_size, current_bet, board, deck, action_history)
+              VALUES (?, 'ZAO Poker Table', 'NLHE', 'waiting', 0, 6, 0, 0, '', '', '')
+              ON CONFLICT(id) DO NOTHING`,
+        args: [gameId],
+      });
+      gameState = await getGameState(gameId);
+    }
+
     if (!gameState) {
       // Return initial lobby frame if no game
       const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
@@ -110,8 +122,58 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const { table, players } = gameState;
-    const player = players.find((p: any) => p.fid === fid);
+    let { table, players } = gameState;
+
+    // Handle starting new hand if status is 'waiting' and a button is clicked
+    if (table.status === 'waiting' && buttonIndex && players.length >= 2) {
+      await startNewHand(gameId);
+      const refreshed = await getGameState(gameId);
+      if (refreshed) {
+        table = refreshed.table;
+        players = refreshed.players;
+      }
+    }
+
+    let player = players.find((p: any) => p.fid === fid);
+    if (!player) {
+      if (buttonIndex === 1) { // Take Seat
+        if (players.length < table.max_players) {
+          const occupiedSeats = players.map(p => p.seat_index);
+          let openSeat = 0;
+          for (let s = 0; s < table.max_players; s++) {
+            if (!occupiedSeats.includes(s)) {
+              openSeat = s;
+              break;
+            }
+          }
+          await db.execute({
+            sql: `INSERT INTO players (fid, username, table_id, seat_index, stack_size, status, total_invested, current_bet, hand, visible_cards)
+                  VALUES (?, ?, ?, ?, 1000, 'waiting', 0, 0, '', '')
+                  ON CONFLICT(fid, table_id) DO NOTHING`,
+            args: [fid, `User#${fid}`, gameId, openSeat],
+          });
+          const refreshed = await getGameState(gameId);
+          if (refreshed) {
+            table = refreshed.table;
+            players = refreshed.players;
+            player = players.find((p: any) => p.fid === fid);
+          }
+        }
+      } else {
+        const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
+        return NextResponse.json({
+          type: 'frame',
+          version: 'vNext',
+          image: `${baseUrl}/api/poker/frame?scene=not_seated`,
+          buttons: [
+            { label: 'Take Seat', action: 'post' },
+            { label: 'Back to Lobby', action: 'post' },
+          ],
+          postUrl: `${baseUrl}/api/poker/swarm`,
+        });
+      }
+    }
+
     if (!player) {
       const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
       return NextResponse.json({
@@ -130,7 +192,44 @@ export async function POST(req: NextRequest) {
     const holeCards = player.hand ? player.hand.split(',').map((c: string) => c.trim()) : [];
     const communityCards = table.board ? table.board.split(',').map((c: string) => c.trim()) : [];
 
-    // Build info set and verify
+    // If active turn, and button pressed, apply action
+    let selectedAction: number | null = null;
+    let selectedAmount = 0;
+
+    if (table.status === 'playing' && table.current_turn_fid === fid && buttonIndex) {
+      const edges = getValidActions(
+        table.current_bet,
+        player.stack_size,
+        table.pot_size,
+        table.phase as 'preflop' | 'flop' | 'turn' | 'river',
+        player.has_acted === 1
+      );
+
+      if (buttonIndex >= 1 && buttonIndex <= edges.length) {
+        const clickedEdge = edges[buttonIndex - 1];
+        selectedAction = clickedEdge.type;
+        selectedAmount = clickedEdge.minAmount;
+
+        // Apply action to the database
+        await applyAction(gameId, player.seat_index, selectedAction, selectedAmount);
+
+        // Re-fetch state
+        const refreshed = await getGameState(gameId);
+        if (refreshed) {
+          table = refreshed.table;
+          players = refreshed.players;
+          const refreshedPlayer = players.find((p) => p.fid === fid);
+          if (refreshedPlayer) {
+            player.stack_size = refreshedPlayer.stack_size;
+            player.current_bet = refreshedPlayer.current_bet;
+            player.has_acted = refreshedPlayer.has_acted;
+            player.status = refreshedPlayer.status;
+          }
+        }
+      }
+    }
+
+    // Build public stacks
     const stacks: Record<number, number> = {};
     for (const p of players) {
       if (p.seat_index !== null) stacks[p.seat_index] = p.stack_size;
@@ -147,20 +246,36 @@ export async function POST(req: NextRequest) {
       stacks,
     };
 
-    const infoSet = buildInfoSet(publicState, playerSeat, [holeCards[0] || '?', holeCards[1] || '?'] as [string, string]);
+    const nextInfoSet = buildInfoSet(
+      publicState,
+      playerSeat,
+      [holeCards[0] || '?', holeCards[1] || '?'] as [string, string]
+    );
+    const nextHash = hashInfoSet(nextInfoSet, SERVER_SECRET);
 
-    // Verify state hash if present
-    if (stateHash && !verifyInfoSet(infoSet, stateHash, SERVER_SECRET)) {
-      return NextResponse.json({ error: 'Invalid state hash' }, { status: 403 });
+    // Dynamic buttons
+    const isMyTurn = table.current_turn_fid === fid;
+    let buttons;
+    if (isMyTurn && table.status === 'playing') {
+      const edges = getValidActions(
+        table.current_bet,
+        player.stack_size,
+        table.pot_size,
+        table.phase as 'preflop' | 'flop' | 'turn' | 'river',
+        player.has_acted === 1
+      );
+      buttons = edges.map((e) => ({
+        label: e.label,
+        action: 'post' as const,
+      }));
+    } else {
+      buttons = [{
+        label: table.status === 'playing' ? 'Refresh 🔄' : 'New Hand 🃏',
+        action: 'post' as const,
+      }];
     }
 
-    // If button pressed, apply action
-    let selectedAction: number | null = null;
-    if (buttonIndex) {
-      selectedAction = buttonIndexToAction(buttonIndex);
-    }
-
-    // Use swarm for advanced processing (odds calc, advice, frame building)
+    // Execute swarm for GTO Advice
     const swarm = new PokerSwarm();
     const swarmResult = swarm.execute(JSON.stringify(body), {
       gameState: {
@@ -173,48 +288,16 @@ export async function POST(req: NextRequest) {
         history: table.action_history,
       },
       playerFid: fid,
-      action: selectedAction !== null ? String(selectedAction) : undefined,
     });
 
-    // Get valid actions for the player
-    const edges = getValidActions(
-      table.current_bet,
-      player.stack_size,
-      table.pot_size,
-      table.phase as 'preflop' | 'flop' | 'turn' | 'river',
-      player.has_acted === 1
-    );
-
-    // Build next state hash
-    const nextInfoSet = buildInfoSet(
-      {
-        ...publicState,
-        activeSeat: playerSeat,
-        currentBet: table.current_bet,
-        pot: table.pot_size,
-        stacks,
-      },
-      playerSeat,
-      [holeCards[0] || '?', holeCards[1] || '?'] as [string, string]
-    );
-    const nextHash = hashInfoSet(nextInfoSet, SERVER_SECRET);
-
-    // Encode state for next frame
     const frameState = Buffer.from(JSON.stringify({
       gameId,
       seat: playerSeat,
       hash: nextHash,
     })).toString('base64');
 
-    // Build frame buttons from valid actions
-    const buttons = edges.map((e) => ({
-      label: e.label,
-      action: 'post' as const,
-    }));
-
-    // Add AI advice button if swarm provided recommendation
     const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
-    let imageUrl = `${baseUrl}/api/poker/frame?h=${nextHash}&gameId=${gameId}`;
+    let imageUrl = `${baseUrl}/api/poker/frame?h=${nextHash}&gameId=${gameId}&pot=${table.pot_size}&street=${table.phase}&community=${communityCards.join(',')}&hole=${holeCards.join(',')}&stack=${player.stack_size}&facing=${table.current_bet - player.current_bet}`;
     const advice = (swarmResult as any)?.recommendation;
     if (advice) {
       imageUrl += `&advice=${encodeURIComponent(advice)}`;

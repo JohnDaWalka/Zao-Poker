@@ -27,3 +27,11 @@ out/
 .vercel
 .env*
 .agents/
+
+# Hardhat
+artifacts/
+cache/
+typechain/
+typechain-types/
+coverage/
+coverage.json

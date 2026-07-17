@@ -3,7 +3,7 @@ import { getValidActions, BET_ABSTRACTION } from '~/lib/poker/abstraction';
 import { buildInfoSet, hashInfoSet, verifyInfoSet } from '~/lib/poker/state';
 import { encodeActionHistory } from '~/lib/poker/encoding';
 import { db } from '~/lib/db';
-import { startNewHand, advanceStreet, isBettingRoundComplete, getNextTurnSeat } from '~/lib/game-engine';
+import { startNewHand, advanceStreet, isBettingRoundComplete, getNextTurnSeat, applyAction } from '~/lib/game-engine';
 import { rateLimit, getClientIP } from '~/lib/rate-limit';
 import { validateActionPayload } from '~/lib/validation';
 
@@ -77,92 +77,6 @@ function findPlayerBySeat(players: PlayerRow[], seat: number): PlayerRow | undef
   return players.find((p) => p.seat_index === seat);
 }
 
-async function applyAction(
-  tableId: string,
-  players: PlayerRow[],
-  seatIndex: number,
-  actionType: number,
-  amount: number
-): Promise<{ advanced: boolean; nextSeat: number | null }> {
-  const player = findPlayerBySeat(players, seatIndex);
-  if (!player) return { advanced: false, nextSeat: null };
-
-  const table = (await getGameState(tableId))?.table;
-  if (!table) return { advanced: false, nextSeat: null };
-
-  const { current_bet, pot_size } = table;
-  const playerCurrentBet = player.current_bet;
-  const toCall = current_bet - playerCurrentBet;
-
-  if (actionType === BET_ABSTRACTION.FOLD) {
-    await db.execute({
-      sql: 'UPDATE players SET status = ? WHERE table_id = ? AND seat_index = ?',
-      args: ['folded', tableId, seatIndex],
-    });
-  } else if (actionType === BET_ABSTRACTION.CHECK_CALL) {
-    const callAmount = Math.min(toCall, player.stack_size);
-    if (callAmount > 0) {
-      await db.execute({
-        sql: 'UPDATE players SET stack_size = stack_size - ?, current_bet = current_bet + ?, total_invested = total_invested + ? WHERE table_id = ? AND seat_index = ?',
-        args: [callAmount, callAmount, callAmount, tableId, seatIndex],
-      });
-      await db.execute({
-        sql: 'UPDATE tables SET pot_size = pot_size + ? WHERE id = ?',
-        args: [callAmount, tableId],
-      });
-    }
-  } else if (actionType === BET_ABSTRACTION.BET_HALF || actionType === BET_ABSTRACTION.BET_FULL || actionType === BET_ABSTRACTION.ALL_IN) {
-    const raiseTo = amount;
-    const additional = raiseTo - playerCurrentBet;
-    const actualAdditional = Math.min(additional, player.stack_size);
-    if (actualAdditional > 0) {
-      await db.execute({
-        sql: 'UPDATE players SET stack_size = stack_size - ?, current_bet = current_bet + ?, total_invested = total_invested + ? WHERE table_id = ? AND seat_index = ?',
-        args: [actualAdditional, actualAdditional, actualAdditional, tableId, seatIndex],
-      });
-      await db.execute({
-        sql: 'UPDATE tables SET pot_size = pot_size + ?, current_bet = ? WHERE id = ?',
-        args: [actualAdditional, playerCurrentBet + actualAdditional, tableId],
-      });
-    }
-  }
-
-  // Mark player as acted
-  await db.execute({
-    sql: 'UPDATE players SET has_acted = 1 WHERE table_id = ? AND seat_index = ?',
-    args: [tableId, seatIndex],
-  });
-
-  // Append action to history
-  const actionChar = ['f', 'c', 'h', 'p', 'a'][actionType] ?? '?';
-  const newHistory = table.action_history + `${seatIndex + 1}${actionChar}`;
-  await db.execute({
-    sql: 'UPDATE tables SET action_history = ? WHERE id = ?',
-    args: [newHistory, tableId],
-  });
-
-  // Check if betting round is complete and advance if so
-  const isComplete = await isBettingRoundComplete(tableId);
-  if (isComplete) {
-    await advanceStreet(tableId);
-    return { advanced: true, nextSeat: null };
-  }
-
-  // Otherwise, get next player's turn
-  const nextSeat = await getNextTurnSeat(tableId, seatIndex);
-  if (nextSeat !== null) {
-    const nextPlayer = findPlayerBySeat(players, nextSeat);
-    if (nextPlayer) {
-      await db.execute({
-        sql: 'UPDATE tables SET current_turn_fid = ? WHERE id = ?',
-        args: [nextPlayer.fid, tableId],
-      });
-    }
-  }
-
-  return { advanced: false, nextSeat };
-}
-
 export async function POST(req: NextRequest) {
   try {
     // Rate limit: 30 actions per minute per IP
@@ -227,7 +141,7 @@ export async function POST(req: NextRequest) {
     let actionResult = { advanced: false, nextSeat: null as number | null };
     if (selectedAction !== undefined && selectedAction !== null) {
       const amount = selectedAmount ?? 0;
-      actionResult = await applyAction(gameId, players, playerSeat, selectedAction, amount);
+      actionResult = await applyAction(gameId, playerSeat, selectedAction, amount);
       // Re-fetch after mutation
       const refreshed = await getGameState(gameId);
       if (!refreshed) {

@@ -34,7 +34,7 @@ export interface GameConfig {
 }
 
 const RANK_STUD_ORDER: Record<string, number> = {
-  A: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, T: 10, J: 11, Q: 12, K: 13,
+  2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, T: 10, J: 11, Q: 12, K: 13, A: 14,
 };
 const SUIT_ORDER: Record<string, number> = { c: 1, d: 2, h: 3, s: 4 };
 

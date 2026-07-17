@@ -192,10 +192,10 @@ describe("game-rules", () => {
       const players: PlayerForActing[] = [
         { fid: 1, seatIndex: 0, hand: [], visibleCards: ["3c"], status: "playing" },
         { fid: 2, seatIndex: 1, hand: [], visibleCards: ["2d"], status: "playing" },
-        { fid: 3, seatIndex: 2, hand: [], visibleCards: ["Ah"], status: "playing" },
+        { fid: 3, seatIndex: 2, hand: [], visibleCards: ["2c"], status: "playing" },
       ];
       const fid = getFirstToAct(getGameConfig("STUD"), "3rd", players, 0);
-      // Ah = Ace (lowest in stud order), so fid 3
+      // 2c (club) < 2d (diamond) < 3c
       expect(fid).toBe(3);
     });
 
@@ -272,8 +272,8 @@ describe("game-rules", () => {
         { fid: 3, seatIndex: 2, visibleCards: ["Ah"] },
       ];
       const result = calculateBringIn(getGameConfig("STUD"), players, 10);
-      // Ace is lowest in stud
-      expect(result.bringInFid).toBe(3);
+      // Aces are high in stud, so 2d is the lowest card
+      expect(result.bringInFid).toBe(2);
       // bringIn = 0.5 * smallBet = 0.5 * 10 = 5
       expect(result.amount).toBe(5);
     });

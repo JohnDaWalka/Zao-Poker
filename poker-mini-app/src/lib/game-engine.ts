@@ -6,8 +6,10 @@
  */
 
 import { db } from './db';
-import { bestHandRank, compareHandRanks, rankShowdownWinners, getBestOmaha8Hand, rankHighLowShowdown } from './poker-hand-evaluator';
-import { getNextStreet, getGameConfig, usesBlinds, usesBoard, GameVariant } from './game-rules';
+
+import { getNextStreet, getGameConfig, usesBlinds, usesBoard, GameVariant, getFirstToAct, calculateBringIn, PlayerForActing } from './game-rules';
+import { resolveShowdown } from './hand-history';
+import { BET_ABSTRACTION } from './poker/abstraction';
 
 const FULL_DECK = [
   'As','Ks','Qs','Js','Ts','9s','8s','7s','6s','5s','4s','3s','2s',
@@ -121,14 +123,36 @@ export async function startNewHand(tableId: string): Promise<void> {
     });
   }
 
+  // Update table deck
+  const remainingDeck = deck.slice(deckIdx);
+  await db.execute({
+    sql: 'UPDATE tables SET deck = ? WHERE id = ?',
+    args: [remainingDeck.join(','), tableId],
+  });
+
+  // Re-fetch players to get correct hand/visible_cards details
+  const { rows: refetchedPlayerRows } = await db.execute({
+    sql: 'SELECT * FROM players WHERE table_id = ? ORDER BY seat_index',
+    args: [tableId],
+  });
+  const refetchedPlayers = refetchedPlayerRows as unknown as Player[];
+  const refetchedActive = refetchedPlayers.filter(p => p.status !== 'waiting');
+
   if (usesBlinds(config)) {
-    await postBlinds(tableId, table.dealer_seat_index, activePlayers);
+    await postBlinds(tableId, table.dealer_seat_index, refetchedActive);
   } else if (isStud) {
-    await postAnteAndBringIn(tableId, table.dealer_seat_index, activePlayers, table.game_type as GameVariant);
+    await postAnteAndBringIn(tableId, table.dealer_seat_index, refetchedActive, table.game_type as GameVariant);
   }
 
-  const firstActor = getFirstToActSeat(table.game_type as GameVariant, 'preflop', activePlayers, table.dealer_seat_index);
-  const firstPlayer = activePlayers.find(p => p.seat_index === firstActor);
+  // Re-fetch players again to get correct blinds/antes post status
+  const { rows: finalPlayersRows } = await db.execute({
+    sql: 'SELECT * FROM players WHERE table_id = ? ORDER BY seat_index',
+    args: [tableId],
+  });
+  const finalActivePlayers = (finalPlayersRows as unknown as Player[]).filter(p => p.status === 'active');
+
+  const firstActor = getFirstToActSeat(table.game_type as GameVariant, 'preflop', finalActivePlayers, table.dealer_seat_index);
+  const firstPlayer = finalActivePlayers.find(p => p.seat_index === firstActor);
   if (firstPlayer) {
     await db.execute({
       sql: 'UPDATE tables SET current_turn_fid = ? WHERE id = ?',
@@ -174,7 +198,6 @@ async function postBlinds(tableId: string, dealerSeat: number, players: Player[]
 async function postAnteAndBringIn(tableId: string, _dealerSeat: number, players: Player[], gameType: GameVariant): Promise<void> {
   const config = getGameConfig(gameType);
   const anteAmount = Math.floor(10 * (config.anteMul || 0.25));
-  const bringInAmount = Math.floor(10 * (config.bringInMul || 0.5));
 
   let totalPot = 0;
   for (const p of players) {
@@ -189,74 +212,59 @@ async function postAnteAndBringIn(tableId: string, _dealerSeat: number, players:
     }
   }
 
-  const visibleCards: { seat: number; fid: number; card: string }[] = [];
-  for (const p of players) {
-    if (p.visible_cards) {
-      const cards = p.visible_cards.split(',').filter(Boolean);
-      if (cards.length > 0) {
-        visibleCards.push({ seat: p.seat_index, fid: p.fid, card: cards[0] });
+  const playersForBringIn = players.map(p => ({
+    fid: p.fid,
+    seatIndex: p.seat_index,
+    visibleCards: p.visible_cards ? p.visible_cards.split(',').filter(Boolean) : [],
+  }));
+
+  const { bringInFid, amount: bringInAmount } = calculateBringIn(config, playersForBringIn, 10);
+
+  if (bringInFid !== null) {
+    const p = players.find(x => x.fid === bringInFid);
+    if (p) {
+      const actualBringIn = Math.min(bringInAmount, p.stack_size);
+      if (actualBringIn > 0) {
+        await db.execute({
+          sql: `UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ?
+                WHERE table_id = ? AND fid = ?`,
+          args: [actualBringIn, actualBringIn, actualBringIn, tableId, bringInFid],
+        });
+        totalPot += actualBringIn;
       }
-    }
-  }
-
-  if (visibleCards.length > 0) {
-    const sorted = visibleCards.sort((a, b) => {
-      const rankOrder = '23456789TJQKA';
-      const aVal = rankOrder.indexOf(a.card[0]);
-      const bVal = rankOrder.indexOf(b.card[0]);
-      if (aVal !== bVal) return aVal - bVal;
-      const suitOrder = 'shcd';
-      return suitOrder.indexOf(a.card[1]) - suitOrder.indexOf(b.card[1]);
-    });
-    const bringInPlayer = sorted[0];
-    const actualBringIn = Math.min(bringInAmount, 
-      players.find(p => p.fid === bringInPlayer.fid)?.stack_size ?? 0);
-    
-    if (actualBringIn > 0) {
+      
       await db.execute({
-        sql: `UPDATE players SET stack_size = stack_size - ?, current_bet = ?, total_invested = total_invested + ?
-              WHERE table_id = ? AND fid = ?`,
-        args: [actualBringIn, actualBringIn, actualBringIn, tableId, bringInPlayer.fid],
+        sql: 'UPDATE tables SET pot_size = ?, current_bet = ? WHERE id = ?',
+        args: [totalPot, bringInAmount, tableId],
       });
-      totalPot += actualBringIn;
+      return;
     }
-
-    await db.execute({
-      sql: 'UPDATE tables SET pot_size = ?, current_bet = ? WHERE id = ?',
-      args: [totalPot, bringInAmount, tableId],
-    });
   }
+
+  await db.execute({
+    sql: 'UPDATE tables SET pot_size = ?, current_bet = 0 WHERE id = ?',
+    args: [totalPot, tableId],
+  });
 }
 
 function getFirstToActSeat(gameType: GameVariant, street: string, players: Player[], dealerSeat: number): number {
-  const activePlayers = players.filter(p => p.status !== 'waiting');
-  const maxPlayers = activePlayers.length;
   const config = getGameConfig(gameType);
-
-  if (usesBlinds(config) && street === 'preflop') {
-    return (dealerSeat + 3) % maxPlayers;
+  const playersForActing: PlayerForActing[] = players.map(p => ({
+    fid: p.fid,
+    seatIndex: p.seat_index,
+    hand: p.hand ? p.hand.split(',').filter(Boolean) : [],
+    visibleCards: p.visible_cards ? p.visible_cards.split(',').filter(Boolean) : [],
+    status: p.status,
+  }));
+  const firstToActFid = getFirstToAct(config, street, playersForActing, dealerSeat);
+  if (firstToActFid !== null) {
+    const p = players.find(x => x.fid === firstToActFid);
+    if (p) return p.seat_index;
   }
   
-  if (!usesBlinds(config)) {
-    if (street === 'preflop' || street === '3rd') {
-      const withVisible = activePlayers.filter(p => p.visible_cards);
-      if (withVisible.length > 0) {
-        const rankOrder = '23456789TJQKA';
-        const sorted = withVisible.sort((a, b) => {
-          const aCard = a.visible_cards.split(',')[0];
-          const bCard = b.visible_cards.split(',')[0];
-          const aVal = rankOrder.indexOf(aCard[0]);
-          const bVal = rankOrder.indexOf(bCard[0]);
-          if (aVal !== bVal) return aVal - bVal;
-          const suitOrder = 'shcd';
-          return suitOrder.indexOf(aCard[1]) - suitOrder.indexOf(bCard[1]);
-        });
-        return sorted[0].seat_index;
-      }
-    }
-  }
-  
-  return (dealerSeat + 1) % maxPlayers;
+  // Fallback
+  const activePlayers = players.filter(p => p.status === 'active');
+  return activePlayers[0]?.seat_index ?? 0;
 }
 
 export async function isBettingRoundComplete(tableId: string): Promise<boolean> {
@@ -268,8 +276,8 @@ export async function isBettingRoundComplete(tableId: string): Promise<boolean> 
   const table = tableRows[0] as unknown as { current_bet: number };
 
   const { rows: playerRows } = await db.execute({
-    sql: 'SELECT * FROM players WHERE table_id = ? AND status IN (?, ?)',
-    args: [tableId, 'active', 'waiting'],
+    sql: 'SELECT * FROM players WHERE table_id = ?',
+    args: [tableId],
   });
   const players = playerRows as unknown as Player[];
 
@@ -277,8 +285,10 @@ export async function isBettingRoundComplete(tableId: string): Promise<boolean> 
   if (activePlayers.length <= 1) return true;
 
   for (const p of activePlayers) {
-    if (p.has_acted === 0) return false;
-    if (p.current_bet < table.current_bet && p.stack_size > 0) return false;
+    if (p.stack_size > 0) {
+      if (p.has_acted === 0) return false;
+      if (p.current_bet < table.current_bet) return false;
+    }
   }
 
   return true;
@@ -313,10 +323,33 @@ export async function advanceStreet(tableId: string): Promise<void> {
 
   const deck = table.deck.split(',').filter(Boolean);
   const currentBoard = table.board ? table.board.split(',').filter(Boolean) : [];
-  const cardsToDeal = nextStreet.phase === 'flop' ? 3 : 1;
-  const boardStartIdx = 52 - deck.length;
-  const newCards = deck.slice(boardStartIdx, boardStartIdx + cardsToDeal);
-  const newBoard = [...currentBoard, ...newCards];
+  let newBoard = [...currentBoard];
+  let remainingDeck = [...deck];
+
+  if (usesBoard(config)) {
+    const cardsToDeal = nextStreet.phase === 'flop' ? 3 : 1;
+    const boardStartIdx = 52 - deck.length;
+    const newCards = deck.slice(boardStartIdx, boardStartIdx + cardsToDeal);
+    newBoard = [...currentBoard, ...newCards];
+    remainingDeck = deck.slice(boardStartIdx + cardsToDeal);
+  } else {
+    // Stud: update visible cards for active players
+    for (const p of activePlayers) {
+      const cards = p.hand.split(',').filter(Boolean);
+      let visibleCards = '';
+      if (nextStreet.phase === '4th') visibleCards = cards.slice(2, 4).join(',');
+      else if (nextStreet.phase === '5th') visibleCards = cards.slice(2, 5).join(',');
+      else if (nextStreet.phase === '6th') visibleCards = cards.slice(2, 6).join(',');
+      else if (nextStreet.phase === '7th') visibleCards = cards.slice(2, 6).join(','); // 7th card is face down
+      
+      if (visibleCards) {
+        await db.execute({
+          sql: 'UPDATE players SET visible_cards = ? WHERE table_id = ? AND fid = ?',
+          args: [visibleCards, tableId, p.fid],
+        });
+      }
+    }
+  }
 
   await db.execute({
     sql: `UPDATE players SET current_bet = 0, has_acted = 0
@@ -325,14 +358,30 @@ export async function advanceStreet(tableId: string): Promise<void> {
   });
 
   await db.execute({
-    sql: `UPDATE tables SET phase = ?, board = ?, current_bet = 0,
+    sql: `UPDATE tables SET phase = ?, board = ?, deck = ?, current_bet = 0,
           last_aggressor_fid = NULL, action_history = action_history || ?
           WHERE id = ?`,
-    args: [nextStreet.phase, newBoard.join(','), `|${nextStreet.phase}|`, tableId],
+    args: [nextStreet.phase, newBoard.join(','), remainingDeck.join(','), `|${nextStreet.phase}|`, tableId],
   });
 
-  const firstActor = getFirstToActSeat(table.game_type as GameVariant, nextStreet.phase, players, table.dealer_seat_index);
-  const firstPlayer = activePlayers.find(p => p.seat_index === firstActor);
+  // Re-fetch players after state update
+  const { rows: updatedPlayerRows } = await db.execute({
+    sql: 'SELECT * FROM players WHERE table_id = ? ORDER BY seat_index',
+    args: [tableId],
+  });
+  const updatedPlayers = updatedPlayerRows as unknown as Player[];
+  const updatedActivePlayers = updatedPlayers.filter(p => p.status === 'active');
+
+  const activeWithChips = updatedActivePlayers.filter(p => p.stack_size > 0);
+  if (activeWithChips.length <= 1) {
+    // No more betting possible (everyone is all-in, or all-in except one player).
+    // Automatically advance to the next street!
+    await advanceStreet(tableId);
+    return;
+  }
+
+  const firstActor = getFirstToActSeat(table.game_type as GameVariant, nextStreet.phase, updatedPlayers, table.dealer_seat_index);
+  const firstPlayer = updatedActivePlayers.find(p => p.seat_index === firstActor);
   if (firstPlayer) {
     await db.execute({
       sql: 'UPDATE tables SET current_turn_fid = ? WHERE id = ?',
@@ -375,76 +424,10 @@ async function runShowdown(tableId: string): Promise<void> {
   if (tableRows.length === 0) return;
   const table = tableRows[0] as unknown as Table;
 
-  const { rows: playerRows } = await db.execute({
-    sql: 'SELECT * FROM players WHERE table_id = ? AND status = ?',
-    args: [tableId, 'active'],
-  });
-  const players = playerRows as unknown as Player[];
+  // Delegate complete side pot and hand calculation to hand-history's resolveShowdown
+  await resolveShowdown(tableId, table.pot_size, table.board, table.game_type as GameVariant);
 
-  const board = table.board ? table.board.split(',').filter(Boolean) : [];
-  const pot = table.pot_size;
-
-  let winners: { fid: number; amount: number }[] = [];
-
-  if (table.game_type === 'O8B') {
-    // Omaha 8/b high-low split
-    const omahaHands = players.map(p => ({
-      fid: p.fid,
-      holeCards: p.hand.split(',').filter(Boolean),
-    }));
-    
-    const highLowPlayers = omahaHands.map(h => ({
-      fid: h.fid,
-      username: '',
-      holeCards: h.holeCards,
-      invested: 0,
-    }));
-    
-    const result = rankHighLowShowdown(highLowPlayers, board, 'O8B');
-    
-    const highPot = Math.floor(pot * 0.5);
-    for (const fid of result.highWinners) {
-      winners.push({ fid, amount: Math.floor(highPot / result.highWinners.length) });
-    }
-    if (result.lowWinners.length > 0) {
-      const lowPot = pot - highPot;
-      for (const fid of result.lowWinners) {
-        winners.push({ fid, amount: Math.floor(lowPot / result.lowWinners.length) });
-      }
-    }
-  } else {
-    // Standard high-hand poker
-    const hands = players.map(p => ({
-      fid: p.fid,
-      rank: bestHandRank(p.hand.split(',').filter(Boolean), board),
-    }));
-    
-    const bestRank = hands.reduce((best, h) => compareHandRanks(h.rank, best) > 0 ? h.rank : best, hands[0].rank);
-    const potWinners = hands.filter(h => compareHandRanks(h.rank, bestRank) === 0);
-    
-    const share = Math.floor(pot / potWinners.length);
-    for (const w of potWinners) {
-      winners.push({ fid: w.fid, amount: share });
-    }
-  }
-
-  for (const w of winners) {
-    await db.execute({
-      sql: 'UPDATE players SET stack_size = stack_size + ? WHERE table_id = ? AND fid = ?',
-      args: [w.amount, tableId, w.fid],
-    });
-  }
-
-  for (const p of players) {
-    const isWinner = winners.some(w => w.fid === p.fid);
-    const winAmount = winners.filter(w => w.fid === p.fid).reduce((s, w) => s + w.amount, 0);
-    await db.execute({
-      sql: `INSERT INTO hand_history (table_id, fid, hole_cards, board, result, net_amount, pot_size, phase_reached, resolution)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [tableId, p.fid, p.hand, table.board, isWinner ? 'win' : 'loss', winAmount - p.total_invested, pot, table.phase, 'showdown'],
-    });
-  }
-
+  // Clean up table and player states for next hand
   await db.execute({
     sql: `UPDATE tables SET status = 'waiting', pot_size = 0, board = '',
           current_bet = 0, phase = 'preflop', action_history = action_history || '|showdown|',
@@ -468,11 +451,109 @@ export async function getNextTurnSeat(tableId: string, currentSeat: number): Pro
   });
   const players = playerRows as unknown as Player[];
 
-  const activePlayers = players.filter(p => p.status === 'active');
-  if (activePlayers.length <= 1) return null;
+  const actingPlayers = players.filter(p => p.status === 'active' && p.stack_size > 0);
+  if (actingPlayers.length <= 1) return null;
 
-  const seats = activePlayers.map(p => p.seat_index).sort((a, b) => a - b);
+  const seats = actingPlayers.map(p => p.seat_index).sort((a, b) => a - b);
   const currentIdx = seats.indexOf(currentSeat);
+  if (currentIdx === -1) {
+    const nextSeat = seats.find(s => s > currentSeat) ?? seats[0];
+    return nextSeat;
+  }
   const nextIdx = (currentIdx + 1) % seats.length;
   return seats[nextIdx];
+}
+
+export async function applyAction(
+  tableId: string,
+  seatIndex: number,
+  actionType: number,
+  amount: number
+): Promise<{ advanced: boolean; nextSeat: number | null }> {
+  const { rows: playerRows } = await db.execute({
+    sql: 'SELECT * FROM players WHERE table_id = ? ORDER BY seat_index',
+    args: [tableId],
+  });
+  const players = playerRows as unknown as Player[];
+  const player = players.find(p => p.seat_index === seatIndex);
+  if (!player) return { advanced: false, nextSeat: null };
+
+  const { rows: tableRows } = await db.execute({
+    sql: 'SELECT * FROM tables WHERE id = ?',
+    args: [tableId],
+  });
+  if (tableRows.length === 0) return { advanced: false, nextSeat: null };
+  const table = tableRows[0] as unknown as Table;
+
+  const { current_bet, pot_size } = table;
+  const playerCurrentBet = player.current_bet;
+  const toCall = current_bet - playerCurrentBet;
+
+  if (actionType === BET_ABSTRACTION.FOLD) {
+    await db.execute({
+      sql: 'UPDATE players SET status = ? WHERE table_id = ? AND seat_index = ?',
+      args: ['folded', tableId, seatIndex],
+    });
+  } else if (actionType === BET_ABSTRACTION.CHECK_CALL) {
+    const callAmount = Math.min(toCall, player.stack_size);
+    if (callAmount > 0) {
+      await db.execute({
+        sql: 'UPDATE players SET stack_size = stack_size - ?, current_bet = current_bet + ?, total_invested = total_invested + ? WHERE table_id = ? AND seat_index = ?',
+        args: [callAmount, callAmount, callAmount, tableId, seatIndex],
+      });
+      await db.execute({
+        sql: 'UPDATE tables SET pot_size = pot_size + ? WHERE id = ?',
+        args: [callAmount, tableId],
+      });
+    }
+  } else if (actionType === BET_ABSTRACTION.BET_HALF || actionType === BET_ABSTRACTION.BET_FULL || actionType === BET_ABSTRACTION.ALL_IN) {
+    const raiseTo = amount;
+    const additional = raiseTo - playerCurrentBet;
+    const actualAdditional = Math.min(additional, player.stack_size);
+    if (actualAdditional > 0) {
+      await db.execute({
+        sql: 'UPDATE players SET stack_size = stack_size - ?, current_bet = current_bet + ?, total_invested = total_invested + ? WHERE table_id = ? AND seat_index = ?',
+        args: [actualAdditional, actualAdditional, actualAdditional, tableId, seatIndex],
+      });
+      await db.execute({
+        sql: 'UPDATE tables SET pot_size = pot_size + ?, current_bet = ? WHERE id = ?',
+        args: [actualAdditional, playerCurrentBet + actualAdditional, tableId],
+      });
+    }
+  }
+
+  // Mark player as acted
+  await db.execute({
+    sql: 'UPDATE players SET has_acted = 1 WHERE table_id = ? AND seat_index = ?',
+    args: [tableId, seatIndex],
+  });
+
+  // Append action to history
+  const actionChar = ['f', 'c', 'h', 'p', 'a'][actionType] ?? '?';
+  const newHistory = table.action_history + `${seatIndex + 1}${actionChar}`;
+  await db.execute({
+    sql: 'UPDATE tables SET action_history = ? WHERE id = ?',
+    args: [newHistory, tableId],
+  });
+
+  // Check if betting round is complete and advance if so
+  const isComplete = await isBettingRoundComplete(tableId);
+  if (isComplete) {
+    await advanceStreet(tableId);
+    return { advanced: true, nextSeat: null };
+  }
+
+  // Otherwise, get next player's turn
+  const nextSeat = await getNextTurnSeat(tableId, seatIndex);
+  if (nextSeat !== null) {
+    const nextPlayer = players.find(p => p.seat_index === nextSeat);
+    if (nextPlayer) {
+      await db.execute({
+        sql: 'UPDATE tables SET current_turn_fid = ? WHERE id = ?',
+        args: [nextPlayer.fid, tableId],
+      });
+    }
+  }
+
+  return { advanced: false, nextSeat };
 }

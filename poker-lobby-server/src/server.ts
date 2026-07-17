@@ -2,6 +2,7 @@ import express from 'express';
 import WebSocket from 'ws';
 import { createClient } from '@libsql/client';
 import dotenv from 'dotenv';
+import url from 'url';
 import { 
   PokerTable, 
   LobbyState, 
@@ -110,9 +111,26 @@ async function loadLobbyFromDb(): Promise<LobbyState> {
 
 async function broadcastState() {
   lobbyState = await loadLobbyFromDb();
-  const payload = JSON.stringify({ type: 'state', payload: lobbyState });
+  
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
+      const clientFid = (client as any).fid || null;
+      
+      // Mask hole cards for all players except the current client
+      const maskedTables = lobbyState.tables.map((table) => {
+        const maskedSeats = table.seats.map((seat) => {
+          if (seat.user && clientFid !== null && Number(seat.user.fid) === Number(clientFid)) {
+            return seat;
+          }
+          return { ...seat, holeCards: [] };
+        });
+        return { ...table, seats: maskedSeats };
+      });
+
+      const payload = JSON.stringify({ 
+        type: 'state', 
+        payload: { tables: maskedTables, updatedAt: lobbyState.updatedAt } 
+      });
       client.send(payload);
     }
   });
@@ -189,12 +207,39 @@ const server = app.listen(PORT, () => {
 // WebSocket
 const wss = new WebSocket.Server({ server, path: '/ws' });
 
-wss.on('connection', async (ws) => {
-  console.log('WS client connected');
+wss.on('connection', async (ws, req) => {
+  // Parse query params to get fid
+  let clientFid: number | null = null;
+  if (req && req.url) {
+    try {
+      const parsedUrl = url.parse(req.url, true);
+      const fidParam = parsedUrl.query.fid || parsedUrl.query.currentFid;
+      if (fidParam) {
+        clientFid = Number(fidParam);
+      }
+    } catch (e) {
+      console.error('Failed to parse connection URL query params:', e);
+    }
+  }
+  (ws as any).fid = clientFid;
+  console.log(`WS client connected. FID: ${(ws as any).fid}`);
 
-  // Send current state on connect
+  // Send initial custom state on connect
   const state = await loadLobbyFromDb();
-  ws.send(JSON.stringify({ type: 'state', payload: state }));
+  // Mask initial state
+  const maskedTables = state.tables.map((table) => {
+    const maskedSeats = table.seats.map((seat) => {
+      if (seat.user && clientFid !== null && Number(seat.user.fid) === Number(clientFid)) {
+        return seat;
+      }
+      return { ...seat, holeCards: [] };
+    });
+    return { ...table, seats: maskedSeats };
+  });
+  ws.send(JSON.stringify({ 
+    type: 'state', 
+    payload: { tables: maskedTables, updatedAt: state.updatedAt } 
+  }));
 
   ws.on('message', async (data) => {
     try {
@@ -202,9 +247,45 @@ wss.on('connection', async (ws) => {
       console.log('WS message:', msg.type);
 
       switch (msg.type) {
+        case 'init':
+          if (msg.payload?.fid) {
+            (ws as any).fid = Number(msg.payload.fid);
+            console.log(`WS client dynamically initialized FID to: ${(ws as any).fid}`);
+            // Push updated state with new masking
+            const s = await loadLobbyFromDb();
+            const currentFid = (ws as any).fid;
+            const mt = s.tables.map((table) => {
+              const ms = table.seats.map((seat) => {
+                if (seat.user && currentFid !== null && Number(seat.user.fid) === Number(currentFid)) {
+                  return seat;
+                }
+                return { ...seat, holeCards: [] };
+              });
+              return { ...table, seats: ms };
+            });
+            ws.send(JSON.stringify({ 
+              type: 'state', 
+              payload: { tables: mt, updatedAt: s.updatedAt } 
+            }));
+          }
+          break;
+
         case 'get_state':
           const s = await loadLobbyFromDb();
-          ws.send(JSON.stringify({ type: 'state', payload: s }));
+          const currentFid = (ws as any).fid;
+          const mt = s.tables.map((table) => {
+            const ms = table.seats.map((seat) => {
+              if (seat.user && currentFid !== null && Number(seat.user.fid) === Number(currentFid)) {
+                return seat;
+              }
+              return { ...seat, holeCards: [] };
+            });
+            return { ...table, seats: ms };
+          });
+          ws.send(JSON.stringify({ 
+            type: 'state', 
+            payload: { tables: mt, updatedAt: s.updatedAt } 
+          }));
           break;
 
         case 'join_table':

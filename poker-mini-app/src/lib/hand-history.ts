@@ -7,6 +7,7 @@ import {
 } from "./poker-hand-evaluator";
 import type { GameVariant } from "./game-rules";
 import { getGameConfig } from "./game-rules";
+import { balanceTables } from "./tournament-engine";
 
 export type HandOutcome = {
   fid: number;
@@ -55,6 +56,19 @@ export async function resolveFoldWin(
   });
 
   await recordHandOutcome(tableId, board, potSize, phaseReached, "fold", outcomes);
+
+  try {
+    const { rows } = await db.execute({
+      sql: "SELECT tournament_id FROM tables WHERE id = ?",
+      args: [tableId],
+    });
+    const tournamentId = rows[0]?.tournament_id;
+    if (typeof tournamentId === "string" && tournamentId) {
+      await balanceTables(tournamentId);
+    }
+  } catch (err) {
+    console.error(`[hand-history] Failed to balance tables after fold win:`, err);
+  }
 }
 
 /** Build side pots from each active player's total investment this hand.
@@ -248,6 +262,19 @@ export async function resolveShowdown(
   });
 
   await recordHandOutcome(tableId, board, potSize, "showdown", "showdown", outcomes);
+
+  try {
+    const { rows } = await db.execute({
+      sql: "SELECT tournament_id FROM tables WHERE id = ?",
+      args: [tableId],
+    });
+    const tournamentId = rows[0]?.tournament_id;
+    if (typeof tournamentId === "string" && tournamentId) {
+      await balanceTables(tournamentId);
+    }
+  } catch (err) {
+    console.error(`[hand-history] Failed to balance tables after showdown:`, err);
+  }
 }
 
 /**

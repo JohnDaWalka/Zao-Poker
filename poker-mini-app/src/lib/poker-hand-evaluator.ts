@@ -147,12 +147,13 @@ export function getLowHandRank(cards: Card[]): number[] | null {
   // Ace counts as 1 for low
   const lowValues = cards.map((c) => (c[0] === "A" ? 1 : rankValue(c)));
   const unpaired = Array.from(new Set(lowValues));
-  if (unpaired.length < 5) return null; // must have 5 distinct ranks
+  // Only keep ranks <= 8
+  const lowRanks = unpaired.filter((v) => v <= 8);
+  if (lowRanks.length < 5) return null; // must have at least 5 distinct ranks <= 8
 
-  const sorted = unpaired.sort((a, b) => a - b);
-  if (sorted[sorted.length - 1] > 8) return null; // 8-or-better
-
-  return sorted.slice(0, 5);
+  // Sort ascending, take the 5 lowest, and then sort descending for lexicographical comparison
+  const bestFiveLow = lowRanks.sort((a, b) => a - b).slice(0, 5).sort((a, b) => b - a);
+  return bestFiveLow;
 }
 
 /** Compare low hands: lower lexicographically wins. Returns negative if a < b. */

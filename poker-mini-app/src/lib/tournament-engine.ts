@@ -7,7 +7,7 @@
 
 import { db } from './db';
 
-interface TournamentConfig {
+export interface TournamentConfig {
   id: string;
   name: string;
   gameType: string;
@@ -23,7 +23,7 @@ interface TournamentConfig {
   addonAllowed: boolean;
 }
 
-interface BlindLevel {
+export interface BlindLevel {
   level: number;
   smallBlind: number;
   bigBlind: number;
@@ -31,7 +31,7 @@ interface BlindLevel {
   durationMinutes: number;
 }
 
-interface TournamentPlayer {
+export interface TournamentPlayer {
   fid: number;
   username: string;
   tableId: string | null;
@@ -44,14 +44,14 @@ interface TournamentPlayer {
   addonUsed: boolean;
 }
 
-interface TournamentTable {
+export interface TournamentTable {
   id: string;
   tournamentId: string;
   seats: (number | null)[]; // fid or null
   status: 'waiting' | 'playing' | 'broken';
 }
 
-const DEFAULT_BLIND_LEVELS: BlindLevel[] = [
+export const DEFAULT_BLIND_LEVELS: BlindLevel[] = [
   { level: 1, smallBlind: 10, bigBlind: 20, ante: 0, durationMinutes: 10 },
   { level: 2, smallBlind: 15, bigBlind: 30, ante: 0, durationMinutes: 10 },
   { level: 3, smallBlind: 20, bigBlind: 40, ante: 5, durationMinutes: 10 },
@@ -74,7 +74,7 @@ const DEFAULT_BLIND_LEVELS: BlindLevel[] = [
   { level: 20, smallBlind: 15000, bigBlind: 30000, ante: 3000, durationMinutes: 10 },
 ];
 
-const DEFAULT_PRIZE_DISTRIBUTION: Record<number, number[]> = {
+export const DEFAULT_PRIZE_DISTRIBUTION: Record<number, number[]> = {
   2: [100],
   3: [60, 40],
   4: [50, 30, 20],
@@ -213,15 +213,20 @@ export async function startTournament(tournamentId: string): Promise<boolean> {
   const tables = tableRows as any[];
 
   // Seat players evenly across tables
-  const seatsPerTable = 6;
+  const numTables = tables.length;
   let playerIdx = 0;
-  for (const table of tables) {
-    const tablePlayers = players.slice(playerIdx, playerIdx + seatsPerTable);
-    for (let i = 0; i < tablePlayers.length; i++) {
-      const p = tablePlayers[i];
+  for (let i = 0; i < numTables; i++) {
+    const table = tables[i];
+    const remainingPlayersCount = players.length - playerIdx;
+    const remainingTablesCount = numTables - i;
+    const tablePlayerCount = Math.ceil(remainingPlayersCount / remainingTablesCount);
+
+    const tablePlayers = players.slice(playerIdx, playerIdx + tablePlayerCount);
+    for (let j = 0; j < tablePlayers.length; j++) {
+      const p = tablePlayers[j];
       await db.execute({
         sql: `UPDATE tournament_players SET table_id = ?, seat_index = ? WHERE tournament_id = ? AND fid = ?`,
-        args: [table.id, i, tournamentId, p.fid],
+        args: [table.id, j, tournamentId, p.fid],
       });
       await db.execute({
         sql: `INSERT INTO players (fid, username, table_id, seat_index, stack_size, status)
@@ -230,10 +235,10 @@ export async function startTournament(tournamentId: string): Promise<boolean> {
                 seat_index = excluded.seat_index,
                 stack_size = excluded.stack_size,
                 status = excluded.status`,
-        args: [p.fid, p.username, table.id, i, tournament.starting_stack, 'waiting'],
+        args: [p.fid, p.username, table.id, j, tournament.starting_stack, 'waiting'],
       });
     }
-    playerIdx += seatsPerTable;
+    playerIdx += tablePlayerCount;
   }
 
   // Update tournament status
@@ -270,6 +275,76 @@ export function calculatePrizes(buyIn: number, entryFee: number, playerCount: nu
 }
 
 /**
+ * Calculate current blind level based on elapsed time since the tournament started.
+ */
+export async function getTournamentBlinds(tournamentId: string): Promise<{ smallBlind: number; bigBlind: number; ante: number; level: number; nextLevelInSecs: number } | null> {
+  const { rows } = await db.execute({
+    sql: `SELECT started_at, blind_levels FROM tournaments WHERE id = ?`,
+    args: [tournamentId],
+  });
+
+  if (rows.length === 0) return null;
+  const tourney = rows[0] as any;
+  if (!tourney.started_at) {
+    const levels = JSON.parse(tourney.blind_levels || '[]') as BlindLevel[];
+    const firstLevel = levels[0] || DEFAULT_BLIND_LEVELS[0];
+    return {
+      smallBlind: firstLevel.smallBlind,
+      bigBlind: firstLevel.bigBlind,
+      ante: firstLevel.ante,
+      level: firstLevel.level,
+      nextLevelInSecs: firstLevel.durationMinutes * 60,
+    };
+  }
+
+  const start = new Date(tourney.started_at).getTime();
+  const now = Date.now();
+  const elapsedMs = Math.max(0, now - start);
+  const levels = JSON.parse(tourney.blind_levels || '[]') as BlindLevel[];
+
+  let cumulativeMs = 0;
+  for (let i = 0; i < levels.length; i++) {
+    const lvl = levels[i];
+    const durationMs = lvl.durationMinutes * 60 * 1000;
+    if (elapsedMs < cumulativeMs + durationMs) {
+      const nextLevelTimeMs = start + cumulativeMs + durationMs;
+      const nextLevelInSecs = Math.max(0, Math.floor((nextLevelTimeMs - now) / 1000));
+      
+      // Update DB to reflect current blind level
+      await db.execute({
+        sql: `UPDATE tournaments SET current_blind_level = ? WHERE id = ?`,
+        args: [lvl.level, tournamentId]
+      });
+
+      return {
+        smallBlind: lvl.smallBlind,
+        bigBlind: lvl.bigBlind,
+        ante: lvl.ante,
+        level: lvl.level,
+        nextLevelInSecs,
+      };
+    }
+    cumulativeMs += durationMs;
+  }
+
+  // If elapsed time exceeds all levels, stay at the final level
+  const finalLevel = levels[levels.length - 1] || DEFAULT_BLIND_LEVELS[DEFAULT_BLIND_LEVELS.length - 1];
+  
+  await db.execute({
+    sql: `UPDATE tournaments SET current_blind_level = ? WHERE id = ?`,
+    args: [finalLevel.level, tournamentId]
+  });
+
+  return {
+    smallBlind: finalLevel.smallBlind,
+    bigBlind: finalLevel.bigBlind,
+    ante: finalLevel.ante,
+    level: finalLevel.level,
+    nextLevelInSecs: 0,
+  };
+}
+
+/**
  * Eliminate a player from the tournament.
  */
 export async function eliminatePlayer(tournamentId: string, fid: number, finishPosition: number): Promise<void> {
@@ -295,51 +370,228 @@ export async function eliminatePlayer(tournamentId: string, fid: number, finishP
 }
 
 /**
- * Break a table and redistribute players.
+ * Synchronizes player stacks, processes eliminations, breaks tables if needed,
+ * and balances players across remaining active tables.
  */
-export async function breakTable(tournamentId: string, tableId: string): Promise<void> {
-  // Get players from broken table
-  const { rows: playerRows } = await db.execute({
-    sql: `SELECT * FROM tournament_players WHERE tournament_id = ? AND table_id = ? AND status = ?`,
-    args: [tournamentId, tableId, 'active'],
+export async function balanceTables(tournamentId: string): Promise<void> {
+  // 1. Sync tournament_players stack from players stack_size
+  await db.execute({
+    sql: `UPDATE tournament_players
+          SET stack = COALESCE(
+            (SELECT stack_size FROM players 
+             WHERE players.fid = tournament_players.fid 
+             AND players.table_id = tournament_players.table_id),
+            0
+          )
+          WHERE tournament_id = ? AND status = 'active'`,
+    args: [tournamentId]
   });
-  const players = playerRows as any[];
 
-  // Get other active tables
-  const { rows: tableRows } = await db.execute({
-    sql: `SELECT * FROM tables WHERE tournament_id = ? AND id != ? AND status = ?`,
-    args: [tournamentId, tableId, 'playing'],
+  // 2. Find and eliminate any player whose stack is <= 0
+  const { rows: activePlayersBeforeElim } = await db.execute({
+    sql: `SELECT fid, username, table_id, stack FROM tournament_players 
+          WHERE tournament_id = ? AND status = 'active'`,
+    args: [tournamentId]
   });
-  const otherTables = tableRows as any[];
 
-  // Redistribute players to other tables
-  for (const player of players) {
-    // Find table with open seat
-    for (const targetTable of otherTables) {
-      const { rows: seatRows } = await db.execute({
-        sql: `SELECT COUNT(*) as count FROM players WHERE table_id = ? AND status != ?`,
-        args: [targetTable.id, 'folded'],
+  const activeCountBefore = activePlayersBeforeElim.length;
+
+  const { rows: bustedPlayers } = await db.execute({
+    sql: `SELECT tp.fid, tp.username, tp.table_id, tp.stack as pre_hand_stack
+          FROM tournament_players tp
+          LEFT JOIN players p ON tp.fid = p.fid AND tp.table_id = p.table_id
+          WHERE tp.tournament_id = ? 
+            AND tp.status = 'active' 
+            AND (p.stack_size <= 0 OR p.fid IS NULL)`,
+    args: [tournamentId]
+  });
+
+  if (bustedPlayers.length > 0) {
+    // Sort busted players by pre-hand stack descending
+    bustedPlayers.sort((a: any, b: any) => Number(b.pre_hand_stack || 0) - Number(a.pre_hand_stack || 0));
+    
+    for (let i = 0; i < bustedPlayers.length; i++) {
+      const p = bustedPlayers[i];
+      const finishPosition = activeCountBefore - i;
+      await eliminatePlayer(tournamentId, Number(p.fid), finishPosition);
+      // Remove from players table
+      await db.execute({
+        sql: `DELETE FROM players WHERE fid = ? AND table_id = ?`,
+        args: [p.fid, p.table_id]
       });
-      const seatCount = (seatRows[0] as any)?.count || 0;
-      if (seatCount < 6) {
+    }
+  }
+
+  // 3. Check tournament status (if 1 or 0 players remain, tournament is finished)
+  const { rows: activePlayersAfterElim } = await db.execute({
+    sql: `SELECT tp.fid, tp.username, tp.table_id, tp.stack, p.seat_index 
+          FROM tournament_players tp
+          JOIN players p ON tp.fid = p.fid AND tp.table_id = p.table_id
+          WHERE tp.tournament_id = ? AND tp.status = 'active'`,
+    args: [tournamentId]
+  });
+
+  const remainingActiveCount = activePlayersAfterElim.length;
+
+  if (remainingActiveCount <= 1) {
+    if (remainingActiveCount === 1) {
+      const winner = activePlayersAfterElim[0] as any;
+      await db.execute({
+        sql: `UPDATE tournament_players SET status = 'cashed', finish_position = 1 
+              WHERE tournament_id = ? AND fid = ?`,
+        args: [tournamentId, winner.fid]
+      });
+    }
+    await db.execute({
+      sql: `UPDATE tournaments SET status = 'finished', finished_at = ? WHERE id = ?`,
+      args: [new Date().toISOString(), tournamentId]
+    });
+    await db.execute({
+      sql: `UPDATE tables SET status = 'finished' WHERE tournament_id = ?`,
+      args: [tournamentId]
+    });
+    return;
+  }
+
+  // 4. Get active tables
+  const { rows: activeTables } = await db.execute({
+    sql: `SELECT id, name, status, max_players FROM tables 
+          WHERE tournament_id = ? AND status IN ('waiting', 'playing')`,
+    args: [tournamentId]
+  });
+
+  if (activeTables.length === 0) return;
+
+  const seatsPerTable = 6;
+  const idealTableCount = Math.ceil(remainingActiveCount / seatsPerTable);
+
+  // Group active players by table_id
+  const playersByTable: Record<string, any[]> = {};
+  for (const table of activeTables) {
+    playersByTable[String((table as any).id)] = [];
+  }
+  for (const p of activePlayersAfterElim) {
+    const pTableId = String((p as any).table_id);
+    if (playersByTable[pTableId]) {
+      playersByTable[pTableId].push(p);
+    }
+  }
+
+  // Break tables if we have more tables than needed
+  let currentTables = [...activeTables];
+  while (currentTables.length > idealTableCount) {
+    currentTables.sort((a: any, b: any) => playersByTable[String(a.id)].length - playersByTable[String(b.id)].length);
+    const tableToBreak = currentTables.shift()!;
+    const tableToBreakId = String((tableToBreak as any).id);
+    
+    console.log(`[tournament:${tournamentId}] Breaking table ${tableToBreakId}`);
+    
+    await db.execute({
+      sql: `UPDATE tables SET status = 'broken' WHERE id = ?`,
+      args: [tableToBreakId]
+    });
+
+    const playersToMove = playersByTable[tableToBreakId];
+    delete playersByTable[tableToBreakId];
+
+    for (const player of playersToMove) {
+      const targetTable = currentTables
+        .filter((t: any) => playersByTable[String(t.id)].length < seatsPerTable)
+        .sort((a: any, b: any) => playersByTable[String(a.id)].length - playersByTable[String(b.id)].length)[0];
+
+      if (targetTable) {
+        const targetTableId = String((targetTable as any).id);
+        const occupiedSeats = new Set(playersByTable[targetTableId].map((p: any) => p.seat_index));
+        let newSeat = 0;
+        while (occupiedSeats.has(newSeat)) {
+          newSeat++;
+        }
+
         await db.execute({
           sql: `UPDATE tournament_players SET table_id = ?, seat_index = ? WHERE tournament_id = ? AND fid = ?`,
-          args: [targetTable.id, seatCount, tournamentId, player.fid],
+          args: [targetTableId, newSeat, tournamentId, player.fid]
         });
+
         await db.execute({
-          sql: `UPDATE players SET table_id = ?, seat_index = ? WHERE fid = ? AND table_id = ?`,
-          args: [targetTable.id, seatCount, player.fid, tableId],
+          sql: `DELETE FROM players WHERE fid = ? AND table_id = ?`,
+          args: [player.fid, tableToBreakId]
         });
-        break;
+
+        await db.execute({
+          sql: `INSERT INTO players (fid, username, table_id, seat_index, stack_size, status)
+                VALUES (?, ?, ?, ?, ?, 'waiting')`,
+          args: [player.fid, player.username, targetTableId, newSeat, player.stack]
+        });
+
+        player.table_id = targetTableId;
+        player.seat_index = newSeat;
+        playersByTable[targetTableId].push(player);
       }
     }
   }
 
+  // Balance remaining tables if the difference in player counts is >= 2
+  while (currentTables.length > 1) {
+    currentTables.sort((a: any, b: any) => playersByTable[String(a.id)].length - playersByTable[String(b.id)].length);
+    const minTable = currentTables[0];
+    const maxTable = currentTables[currentTables.length - 1];
+    
+    const minTableId = String((minTable as any).id);
+    const maxTableId = String((maxTable as any).id);
+
+    const minCount = playersByTable[minTableId].length;
+    const maxCount = playersByTable[maxTableId].length;
+
+    if (maxCount - minCount <= 1) {
+      break; // Balanced!
+    }
+
+    // Move player from maxTable to minTable
+    const maxPlayers = playersByTable[maxTableId].sort((a: any, b: any) => b.seat_index - a.seat_index);
+    const playerToMove = maxPlayers[0];
+
+    const occupiedSeats = new Set(playersByTable[minTableId].map((p: any) => p.seat_index));
+    let newSeat = 0;
+    while (occupiedSeats.has(newSeat)) {
+      newSeat++;
+    }
+
+    await db.execute({
+      sql: `UPDATE tournament_players SET table_id = ?, seat_index = ? WHERE tournament_id = ? AND fid = ?`,
+      args: [minTableId, newSeat, tournamentId, playerToMove.fid]
+    });
+
+    await db.execute({
+      sql: `DELETE FROM players WHERE fid = ? AND table_id = ?`,
+      args: [playerToMove.fid, maxTableId]
+    });
+
+    await db.execute({
+      sql: `INSERT INTO players (fid, username, table_id, seat_index, stack_size, status)
+            VALUES (?, ?, ?, ?, ?, 'waiting')`,
+      args: [playerToMove.fid, playerToMove.username, minTableId, newSeat, playerToMove.stack]
+    });
+
+    playerToMove.table_id = minTableId;
+    playerToMove.seat_index = newSeat;
+
+    playersByTable[maxTableId] = playersByTable[maxTableId].filter((p: any) => p.fid !== playerToMove.fid);
+    playersByTable[minTableId].push(playerToMove);
+  }
+}
+
+/**
+ * Break a table and redistribute players.
+ */
+export async function breakTable(tournamentId: string, tableId: string): Promise<void> {
   // Mark table as broken
   await db.execute({
     sql: `UPDATE tables SET status = ? WHERE id = ?`,
     args: ['broken', tableId],
   });
+
+  // Re-balance tables (which automatically handles broken tables by redistributing players)
+  await balanceTables(tournamentId);
 }
 
 /**
@@ -348,7 +600,7 @@ export async function breakTable(tournamentId: string, tableId: string): Promise
 export async function getTournamentStandings(tournamentId: string): Promise<any[]> {
   const { rows } = await db.execute({
     sql: `SELECT * FROM tournament_players WHERE tournament_id = ? ORDER BY 
-          CASE WHEN finish_position IS NOT NULL THEN finish_position ELSE 0 END DESC,
+          CASE WHEN finish_position IS NOT NULL THEN finish_position ELSE 0 END ASC,
           stack DESC`,
     args: [tournamentId],
   });

@@ -230,12 +230,18 @@ export function useRenderLobby(currentUser?: UniversalUser) {
   );
   const [error, setError] = useState<string | null>(null);
 
-  const wsUrl = useMemo(() => {
-    if (!env.hasRenderLobby || !env.renderWsUrl) return "";
-    return `${env.renderWsUrl.replace(/\/$/, "")}/ws`;
-  }, []);
   const currentFid =
     currentUser && Number.isSafeInteger(currentUser.fid) ? Number(currentUser.fid) : null;
+
+  const wsUrl = useMemo(() => {
+    if (!env.hasRenderLobby || !env.renderWsUrl) return "";
+    const params = new URLSearchParams();
+    if (currentFid !== null) {
+      params.set("fid", String(currentFid));
+    }
+    const query = params.toString();
+    return `${env.renderWsUrl.replace(/\/$/, "")}/ws${query ? `?${query}` : ""}`;
+  }, [currentFid]);
 
   const applySnapshot = useCallback((tables: PokerTable[], version: number) => {
     if (version < appliedStateVersionRef.current) {
@@ -487,6 +493,9 @@ export function useRenderLobby(currentUser?: UniversalUser) {
         if (cancelled) return;
         setStatus("connected");
         setError(null);
+        if (currentFid !== null) {
+          ws.send(JSON.stringify({ type: "init", payload: { fid: currentFid } }));
+        }
         ws.send(JSON.stringify({ type: "get_state" }));
       };
 
@@ -559,7 +568,7 @@ export function useRenderLobby(currentUser?: UniversalUser) {
       }
       wsRef.current?.close();
     };
-  }, [refreshCurrentApiLobby, wsUrl]);
+  }, [refreshCurrentApiLobby, wsUrl, currentFid]);
 
   const send = useCallback((message: unknown) => {
     const socket = wsRef.current;

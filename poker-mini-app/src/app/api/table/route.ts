@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db, initDb } from "~/lib/db";
 import { analyzeHoldemSpot } from "~/lib/game-theory";
 import { resolveFoldWin, resolveShowdown } from "~/lib/hand-history";
+import { getTournamentBlinds, balanceTables } from "~/lib/tournament-engine";
 import {
   GameVariant,
   getGameConfig,
@@ -19,7 +20,7 @@ import {
 
 let dbReady: Promise<void> | null = null;
 
-function ensureDb() {
+export function ensureDb() {
   if (!dbReady) {
     dbReady = initDb().catch((error) => {
       dbReady = null;
@@ -359,14 +360,25 @@ export async function dealNewHand(tableId: string, fids: number[]) {
   const deck = createDeck();
 
   const { rows: tableRows } = await db.execute({
-    sql: "SELECT start_time, dealer_seat_index, game_type FROM tables WHERE id = ?",
+    sql: "SELECT start_time, dealer_seat_index, game_type, tournament_id FROM tables WHERE id = ?",
     args: [tableId]
   });
   const startTime = tableRows[0]?.start_time;
   const currentDealerSeatIndex = Number(tableRows[0]?.dealer_seat_index || 0);
   const gameType = String(tableRows[0]?.game_type || "NLHE") as GameVariant;
   const config = getGameConfig(gameType);
-  const { blinds } = getCurrentBlinds(startTime ? String(startTime) : null);
+  const tournamentId = tableRows[0]?.tournament_id;
+
+  let blinds: { sb: number; bb: number; ante: number } = { sb: 5, bb: 10, ante: 0 };
+  if (typeof tournamentId === "string" && tournamentId) {
+    const tBlinds = await getTournamentBlinds(tournamentId);
+    if (tBlinds) {
+      blinds = { sb: tBlinds.smallBlind, bb: tBlinds.bigBlind, ante: tBlinds.ante };
+    }
+  } else {
+    const res = getCurrentBlinds(startTime ? String(startTime) : null);
+    blinds = res.blinds;
+  }
 
   const { rows: seatedRows } = await db.execute({
     sql: "SELECT fid, seat_index, stack_size FROM players WHERE table_id = ? AND status != 'sitting_out' ORDER BY seat_index ASC",
@@ -374,13 +386,16 @@ export async function dealNewHand(tableId: string, fids: number[]) {
   });
 
   // Automatically top up busted players to starting stack (5000) so they aren't locked out of the new hand
-  for (const player of seatedRows) {
-    if (Number(player.stack_size || 0) <= 0) {
-      await db.execute({
-        sql: "UPDATE players SET stack_size = 5000 WHERE fid = ? AND table_id = ?",
-        args: [player.fid, tableId],
-      });
-      player.stack_size = 5000;
+  // Skip top-up if it's a tournament table
+  if (!tournamentId) {
+    for (const player of seatedRows) {
+      if (Number(player.stack_size || 0) <= 0) {
+        await db.execute({
+          sql: "UPDATE players SET stack_size = 5000 WHERE fid = ? AND table_id = ?",
+          args: [player.fid, tableId],
+        });
+        player.stack_size = 5000;
+      }
     }
   }
 
@@ -1145,16 +1160,32 @@ async function maybeAutoDealPracticeHand(tableId: string) {
   return true;
 }
 
-async function buildTableResponse(tableId: string, currentFid?: number) {
+export async function buildTableResponse(tableId: string, currentFid?: number) {
   const snapshot = await getTableSnapshot(tableId, currentFid);
   if (!snapshot) {
     return null;
   }
 
   const { tableState, players } = snapshot;
-  const { levelIndex, blinds, nextLevelInSecs } = getCurrentBlinds(
-    tableState.start_time ? String(tableState.start_time) : null,
-  );
+  
+  let blinds: { sb: number; bb: number; ante: number } = { sb: 5, bb: 10, ante: 0 };
+  let levelIndex = 0;
+  let nextLevelInSecs = 360;
+
+  if (tableState.tournament_id) {
+    const tBlinds = await getTournamentBlinds(String(tableState.tournament_id));
+    if (tBlinds) {
+      blinds = { sb: tBlinds.smallBlind, bb: tBlinds.bigBlind, ante: tBlinds.ante };
+      levelIndex = tBlinds.level - 1;
+      nextLevelInSecs = tBlinds.nextLevelInSecs;
+    }
+  } else {
+    const res = getCurrentBlinds(tableState.start_time ? String(tableState.start_time) : null);
+    blinds = res.blinds;
+    levelIndex = res.levelIndex;
+    nextLevelInSecs = res.nextLevelInSecs;
+  }
+
   const readyCount = players.filter(
     (player: any) => !isBotPlayer(player) && Number(player.is_ready || 0) === 1,
   ).length;
@@ -1726,6 +1757,10 @@ export async function POST(request: Request) {
         args: [fid, effectiveTableId],
       });
 
+      if (requestedTable.tournament_id) {
+        await balanceTables(String(requestedTable.tournament_id));
+      }
+
       const { rows: remainingPlayers } = await db.execute({
         sql: "SELECT fid, status, is_bot, seat_index FROM players WHERE table_id = ? ORDER BY seat_index ASC",
         args: [effectiveTableId],
@@ -1891,10 +1926,16 @@ export async function POST(request: Request) {
         } else if (action === "bet" || action === "raise") {
           const currentBet = Number(currentGameState.current_bet || 0);
           const lastRaiseAmount = Number(currentGameState.last_raise_amount || 0);
-          // Use current blinds from the table state to compute minimum raise correctly
-          const { blinds } = getCurrentBlinds(
-            currentGameState.start_time ? String(currentGameState.start_time) : null,
-          );
+          
+          let blinds: { sb: number; bb: number; ante: number } = { sb: 5, bb: 10, ante: 0 };
+          if (currentGameState.tournament_id) {
+            const tBlinds = await getTournamentBlinds(String(currentGameState.tournament_id));
+            if (tBlinds) {
+              blinds = { sb: tBlinds.smallBlind, bb: tBlinds.bigBlind, ante: tBlinds.ante };
+            }
+          } else {
+            blinds = getCurrentBlinds(currentGameState.start_time ? String(currentGameState.start_time) : null).blinds;
+          }
           const bb = blinds.bb;
           // Minimum raise: if no bet, min is bb; otherwise currentBet + max(bb, lastRaiseAmount)
           const minRaise = currentBet > 0 ? currentBet + Math.max(bb, lastRaiseAmount) : bb;
@@ -1989,6 +2030,14 @@ export async function POST(request: Request) {
     // "disappear". The UI has an explicit "Start Next Hand" at showdown,
     // and GETs can still trigger auto for practice flow if desired.
     // await maybeAutoDealPracticeHand(effectiveTableId);
+
+    // Broadcast update to all SSE clients for this table
+    try {
+      const { broadcastTableUpdate } = await import("./stream/route");
+      void broadcastTableUpdate(effectiveTableId);
+    } catch (sseErr) {
+      console.error("[sse] Failed to broadcast table update:", sseErr);
+    }
 
     const response = await buildTableResponse(effectiveTableId, fid);
     if (!response) {
