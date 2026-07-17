@@ -156,11 +156,8 @@ function TableScene({
         <div tw="flex flex-col">
           <span tw="text-sm text-slate-400 mb-1">Your Cards</span>
           <div tw="flex">
-            {holeCards.length >= 2 ? (
-              <>
-                <CardComponent card={holeCards[0]} />
-                <CardComponent card={holeCards[1]} />
-              </>
+            {holeCards.length > 0 ? (
+              holeCards.map((c, i) => <CardComponent key={i} card={c} />)
             ) : (
               <>
                 <CardComponent card="?" hidden />
